@@ -1,4 +1,4 @@
-# Data Catalog API
+# S3 Data Catalog API
 
 A FastAPI-based API for serving and managing catalog JSON files with S3 backend storage, full-text search, and comprehensive data management capabilities.
 
@@ -9,6 +9,7 @@ A FastAPI-based API for serving and managing catalog JSON files with S3 backend 
 - **Real-time Reindexing**: Automatic search index updates when data changes
 - **JWT Authentication**: Secure authentication with role-based access control
 - **RESTful API**: Complete CRUD operations for all data types
+- **IRSA Support**: IAM Roles for Service Accounts for secure Kubernetes deployments
 - **Performance Monitoring**: Built-in metrics and response time tracking
 - **CORS Support**: Cross-origin request handling
 - **OpenAPI Documentation**: Automatic API documentation at `/docs`
@@ -17,21 +18,15 @@ A FastAPI-based API for serving and managing catalog JSON files with S3 backend 
 
 ### S3 Mode (Default)
 - **Purpose**: Production-ready scalable data storage
-- **Data Source**: Amazon S3 bucket
+- **Data Source**: Amazon S3 bucket with configurable folder prefix
 - **Performance**: Fast, reliable, and scalable
 - **Use Case**: Production environments, high-traffic applications
-
-### Local Mode (Development)
-- **Purpose**: Development and testing without S3 dependencies
-- **Data Source**: Local `_data` directory
-- **Performance**: Fastest response times, no network latency
-- **Use Case**: Local development, offline testing
 
 ## 🛠️ Quick Start
 
 ### Prerequisites
 - Python 3.8+
-- AWS S3 bucket and credentials
+- AWS S3 bucket and credentials (or IRSA for Kubernetes)
 - Required packages (see `requirements.txt`)
 
 ### Installation
@@ -53,14 +48,18 @@ cp env.example .env
 # S3 Configuration
 S3_MODE=true
 S3_BUCKET_NAME=your-bucket-name
+S3_FOLDER_PREFIX=dh-api
 AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=your-access-key
-AWS_SECRET_ACCESS_KEY=your-secret-key
 
-# Authentication (currently bypassed for development)
-JWT_SECRET_KEY=your-secret-key
-JWT_ALGORITHM=HS256
-JWT_EXPIRATION_HOURS=24
+# AWS Credentials (choose one method):
+# Method 1: IRSA (IAM Roles for Service Accounts) - Recommended for Kubernetes
+# Leave these empty when using IRSA - the container will automatically assume the IAM role
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+
+# Method 2: Explicit credentials (for local development or non-IRSA environments)
+# AWS_ACCESS_KEY_ID=your-access-key
+# AWS_SECRET_ACCESS_KEY=your-secret-key
 
 # Server Configuration
 PORT=8000
@@ -90,72 +89,17 @@ The API will be available at `http://localhost:8000`
 
 ### Search Endpoints
 - `GET /api/search` - Global search across all data
-- `GET /api/search/suggestions` - Get search suggestions
+- `GET /api/search/suggest` - Get search suggestions
 - `GET /api/search/stats` - Get search index statistics
 
-### Model Management
-- `GET /api/models` - List all data models
-- `GET /api/models/{short_name}` - Get specific model
-- `POST /api/models` - Create new model
-- `PUT /api/models/{short_name}` - Update model
-- `DELETE /api/models/{short_name}` - Delete model
-
-### Agreement Management
-- `GET /api/agreements` - List all agreements
-- `GET /api/agreements/{agreement_id}` - Get specific agreement
-- `POST /api/agreements` - Create new agreement
-- `PUT /api/agreements/{agreement_id}` - Update agreement
-- `DELETE /api/agreements/{agreement_id}` - Delete agreement
-
-### Domain Management
-- `GET /api/domains` - List all domains
-- `GET /api/domains/{domain_id}` - Get specific domain
-- `POST /api/domains` - Create new domain
-- `PUT /api/domains/{domain_id}` - Update domain
-- `DELETE /api/domains/{domain_id}` - Delete domain
-
-### Application Management
-- `GET /api/applications` - List all applications
-- `GET /api/applications/{application_id}` - Get specific application
-- `POST /api/applications` - Create new application
-- `PUT /api/applications/{application_id}` - Update application
-- `DELETE /api/applications/{application_id}` - Delete application
-
-### Policy Management
-- `GET /api/policies` - List all policies
-- `GET /api/policies/{policy_id}` - Get specific policy
-- `POST /api/policies` - Create new policy
-- `PUT /api/policies/{policy_id}` - Update policy
-- `DELETE /api/policies/{policy_id}` - Delete policy
-
-### Reference Data Management
-- `GET /api/reference` - List all reference data
-- `GET /api/reference/{item_id}` - Get specific reference item
-- `POST /api/reference` - Create new reference item
-- `PUT /api/reference/{item_id}` - Update reference item
-- `DELETE /api/reference/{item_id}` - Delete reference item
-
-### Toolkit Management
-- `GET /api/toolkit/{component_type}` - List toolkit components by type
-- `GET /api/toolkit/{component_type}/{component_id}` - Get specific component
-- `POST /api/toolkit/{component_type}` - Create new component
-- `PUT /api/toolkit/{component_type}/{component_id}` - Update component
-- `DELETE /api/toolkit/{component_type}/{component_id}` - Delete component
-
-### Authentication Endpoints
-- `POST /api/auth/login` - User login
-- `POST /api/auth/register` - User registration
-- `GET /api/auth/me` - Get current user info
-- `POST /api/auth/refresh` - Refresh JWT token
-
-### Admin Endpoints
-- `POST /api/admin/reindex` - Manually trigger search reindexing
-- `GET /api/admin/reindex?file_name={filename}` - Reindex specific file
+### CRUD Endpoints (for each data type)
+- `POST /api/{type}` - Create new item
+- `PUT /api/{type}/{id}` - Update existing item
+- `DELETE /api/{type}/{id}` - Delete item
 
 ### Debug Endpoints
 - `GET /api/debug/s3` - S3 connection status
 - `GET /api/debug/performance` - Performance metrics
-- `GET /api/debug/cache` - Cache status (S3 mode)
 
 ## 🔍 Search Functionality
 
@@ -165,19 +109,73 @@ The API will be available at `http://localhost:8000`
 curl "http://localhost:8000/api/search?q=customer&limit=10"
 
 # Search with filters
-curl "http://localhost:8000/api/search?q=model&doc_types=models,domains&limit=5"
+curl "http://localhost:8000/api/search?q=model&types=models,domains&limit=5"
 ```
 
 ### Search Suggestions
 ```bash
 # Get search suggestions
-curl "http://localhost:8000/api/search/suggestions?q=cust"
+curl "http://localhost:8000/api/search/suggest?q=cust"
 ```
 
-### Search Statistics
+## 🐳 Docker Deployment
+
+### Development
 ```bash
-# Get search index stats
-curl "http://localhost:8000/api/search/stats"
+# Build and run with .env file
+docker build -t s3-api:dev .
+docker run -p 8000:8000 s3-api:dev
+```
+
+### Production
+```bash
+# Build without .env file (uses environment variables)
+docker build -t s3-api:prod .
+docker run -p 8000:8000 s3-api:prod
+```
+
+## ☸️ Kubernetes Deployment
+
+### IRSA Setup (Recommended)
+
+1. **Create IAM Role** with S3 permissions for your EKS cluster
+2. **Apply Kubernetes manifests:**
+```bash
+kubectl apply -f k8s-configmap.yaml
+kubectl apply -f k8s-deployment.yaml
+```
+
+3. **Update the service account annotation** with your IAM role ARN:
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: s3-api-service-account
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::YOUR_ACCOUNT_ID:role/YOUR_IAM_ROLE_NAME
+```
+
+### Required IAM Permissions
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:ListBucket",
+        "s3:HeadObject"
+      ],
+      "Resource": [
+        "arn:aws:s3:::your-bucket-name",
+        "arn:aws:s3:::your-bucket-name/*"
+      ]
+    }
+  ]
+}
 ```
 
 ## 🔧 Configuration
@@ -188,14 +186,12 @@ curl "http://localhost:8000/api/search/stats"
 |----------|---------|-------------|
 | `S3_MODE` | `true` | Enable S3 backend storage |
 | `S3_BUCKET_NAME` | Required | S3 bucket name |
+| `S3_FOLDER_PREFIX` | `dh-api` | Folder prefix in S3 bucket |
 | `AWS_REGION` | `us-east-1` | AWS region |
-| `AWS_ACCESS_KEY_ID` | Required | AWS access key |
-| `AWS_SECRET_ACCESS_KEY` | Required | AWS secret key |
-| `JWT_SECRET_KEY` | Required | JWT signing key |
-| `JWT_ALGORITHM` | `HS256` | JWT algorithm |
-| `JWT_EXPIRATION_HOURS` | `24` | JWT expiration time |
-| `PORT` | `8000` | API server port |
+| `AWS_ACCESS_KEY_ID` | Optional | AWS access key (empty for IRSA) |
+| `AWS_SECRET_ACCESS_KEY` | Optional | AWS secret key (empty for IRSA) |
 | `HOST` | `0.0.0.0` | API server host |
+| `PORT` | `8000` | API server port |
 | `LOG_LEVEL` | `INFO` | Logging level |
 
 ### Data Files
@@ -277,7 +273,7 @@ curl -H "Authorization: Bearer <token>" \
 curl http://localhost:8000/api/debug/s3
 
 # Verify AWS credentials
-aws s3 ls s3://your-bucket-name
+aws s3 ls s3://your-bucket-name/
 ```
 
 **2. Search Index Empty**
@@ -296,15 +292,6 @@ export PORT=8001
 python main.py
 ```
 
-**4. Data Not Found**
-```bash
-# Check if data exists in S3
-aws s3 ls s3://your-bucket-name/
-
-# Migrate data if needed
-python migrate_to_s3.py
-```
-
 ### Debug Information
 ```bash
 # Check S3 status
@@ -317,34 +304,6 @@ curl http://localhost:8000/api/debug/performance
 curl http://localhost:8000/api/search/stats
 ```
 
-## 🚀 Production Deployment
-
-### Environment Setup
-1. Set up AWS S3 bucket
-2. Configure IAM permissions
-3. Set production environment variables
-4. Enable authentication
-5. Set up monitoring and logging
-
-### Docker Deployment
-```dockerfile
-FROM python:3.9-slim
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install -r requirements.txt
-COPY . .
-CMD ["python", "main.py"]
-```
-
-### Health Checks
-```bash
-# API health
-curl http://localhost:8000/api/debug/s3
-
-# Search health
-curl http://localhost:8000/api/search/stats
-```
-
 ## 📝 Examples
 
 ### Python Client Example
@@ -352,7 +311,7 @@ curl http://localhost:8000/api/search/stats
 import requests
 
 # Search for models
-response = requests.get('http://localhost:8000/api/search?q=customer&doc_types=models')
+response = requests.get('http://localhost:8000/api/search?q=customer&types=models')
 results = response.json()
 
 # Create a new model
@@ -371,7 +330,7 @@ const response = await fetch('http://localhost:8000/api/search?q=customer');
 const results = await response.json();
 
 // Get search suggestions
-const suggestions = await fetch('http://localhost:8000/api/search/suggestions?q=cust');
+const suggestions = await fetch('http://localhost:8000/api/search/suggest?q=cust');
 const suggestionsData = await suggestions.json();
 ```
 
