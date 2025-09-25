@@ -179,7 +179,8 @@ JSON_FILES = {
     "lexicon": "lexicon.json",
     "reference": "reference.json",
     "toolkit": "toolkit.json",
-    "policies": "dataPolicies.json"
+    "policies": "dataPolicies.json",
+    "dataProducts": "dataProducts.json"
 }
 
 # Data type to key mapping for counting items
@@ -192,7 +193,8 @@ DATA_TYPE_KEYS = {
     "lexicon": "terms",
     "reference": "items",
     "toolkit": "toolkit",
-    "policies": "policies"
+    "policies": "policies",
+    "dataProducts": "dataProducts"
 }
 
 

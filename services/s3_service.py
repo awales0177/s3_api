@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from botocore.exceptions import ClientError, NoCredentialsError
 import os
 from dotenv import load_dotenv
+from config import Config
 
 # Load environment variables
 load_dotenv()
@@ -16,10 +17,11 @@ class S3Service:
     
     def __init__(self):
         self.s3_client = None
-        self.bucket_name = os.getenv('S3_BUCKET_NAME')
-        self.region_name = os.getenv('AWS_REGION', 'us-east-1')
-        self.access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
-        self.secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
+        self.bucket_name = Config.S3_BUCKET_NAME
+        self.folder_prefix = Config.S3_FOLDER_PREFIX
+        self.region_name = Config.AWS_REGION
+        self.access_key_id = Config.AWS_ACCESS_KEY_ID
+        self.secret_access_key = Config.AWS_SECRET_ACCESS_KEY
         
         # Initialize S3 client
         self._initialize_s3_client()
@@ -27,8 +29,10 @@ class S3Service:
     def _initialize_s3_client(self):
         """Initialize the S3 client with credentials"""
         try:
+            # For IRSA (IAM Roles for Service Accounts), we don't need explicit credentials
+            # The boto3 client will automatically use the IAM role assigned to the service account
             if self.access_key_id and self.secret_access_key:
-                # Use explicit credentials
+                # Use explicit credentials (for local development or non-IRSA environments)
                 self.s3_client = boto3.client(
                     's3',
                     aws_access_key_id=self.access_key_id,
@@ -37,12 +41,12 @@ class S3Service:
                 )
                 logger.info("S3 client initialized with explicit credentials")
             else:
-                # Use IAM role or default credentials
+                # Use IAM role (IRSA) or default credentials
                 self.s3_client = boto3.client('s3', region_name=self.region_name)
-                logger.info("S3 client initialized with IAM role/default credentials")
+                logger.info("S3 client initialized with IAM role (IRSA) or default credentials")
                 
         except NoCredentialsError:
-            logger.error("AWS credentials not found")
+            logger.error("AWS credentials not found - check IRSA configuration or provide explicit credentials")
             self.s3_client = None
         except Exception as e:
             logger.error(f"Failed to initialize S3 client: {e}")
@@ -75,11 +79,14 @@ class S3Service:
             if not file_path.endswith('.json'):
                 file_path = f"{file_path}.json"
             
-            logger.info(f"Reading JSON file from S3: s3://{self.bucket_name}/{file_path}")
+            # Add folder prefix
+            s3_key = f"{self.folder_prefix}/{file_path}"
+            
+            logger.info(f"Reading JSON file from S3: s3://{self.bucket_name}/{s3_key}")
             
             response = self.s3_client.get_object(
                 Bucket=self.bucket_name,
-                Key=file_path
+                Key=s3_key
             )
             
             # Read and parse JSON content
@@ -127,7 +134,10 @@ class S3Service:
             if not file_path.endswith('.json'):
                 file_path = f"{file_path}.json"
             
-            logger.info(f"Writing JSON file to S3: s3://{self.bucket_name}/{file_path}")
+            # Add folder prefix
+            s3_key = f"{self.folder_prefix}/{file_path}"
+            
+            logger.info(f"Writing JSON file to S3: s3://{self.bucket_name}/{s3_key}")
             
             # Convert data to JSON string
             json_content = json.dumps(data, indent=2, ensure_ascii=False)
@@ -135,7 +145,7 @@ class S3Service:
             # Upload to S3
             self.s3_client.put_object(
                 Bucket=self.bucket_name,
-                Key=file_path,
+                Key=s3_key,
                 Body=json_content.encode('utf-8'),
                 ContentType='application/json'
             )
@@ -165,9 +175,12 @@ class S3Service:
             return None
         
         try:
+            # Add folder prefix to the search prefix
+            search_prefix = f"{self.folder_prefix}/{prefix}" if prefix else f"{self.folder_prefix}/"
+            
             response = self.s3_client.list_objects_v2(
                 Bucket=self.bucket_name,
-                Prefix=prefix
+                Prefix=search_prefix
             )
             
             if 'Contents' in response:
@@ -207,7 +220,10 @@ class S3Service:
             if not file_path.endswith('.json'):
                 file_path = f"{file_path}.json"
             
-            self.s3_client.head_object(Bucket=self.bucket_name, Key=file_path)
+            # Add folder prefix
+            s3_key = f"{self.folder_prefix}/{file_path}"
+            
+            self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
             return True
         except ClientError as e:
             if e.response['Error']['Code'] == '404':
@@ -241,7 +257,10 @@ class S3Service:
             if not file_path.endswith('.json'):
                 file_path = f"{file_path}.json"
             
-            response = self.s3_client.head_object(Bucket=self.bucket_name, Key=file_path)
+            # Add folder prefix
+            s3_key = f"{self.folder_prefix}/{file_path}"
+            
+            response = self.s3_client.head_object(Bucket=self.bucket_name, Key=s3_key)
             return response['ContentLength']
             
         except ClientError as e:

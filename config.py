@@ -1,5 +1,9 @@
 import os
 from datetime import timedelta
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Environment-based configuration
 class Config:
@@ -8,6 +12,7 @@ class Config:
     
     # S3 configuration
     S3_BUCKET_NAME = os.getenv('S3_BUCKET_NAME')
+    S3_FOLDER_PREFIX = os.getenv('S3_FOLDER_PREFIX', 'dh-api')  # Folder prefix in S3 bucket
     AWS_REGION = os.getenv('AWS_REGION', 'us-east-1')
     AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID')
     AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY')
