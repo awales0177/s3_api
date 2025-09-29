@@ -5,10 +5,9 @@ from typing import Dict, Any, List
 from datetime import datetime
 import logging
 from time import perf_counter
+import uuid
 
-# Import authentication modules
-from auth import get_current_user_optional, require_editor_or_admin, require_admin, UserRole
-from endpoints.auth import router as auth_router
+# Authentication removed - API is now publicly accessible
 from services.search_service import search_service
 from services.data_service import DataService
 from config import Config
@@ -114,8 +113,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include authentication router
-app.include_router(auth_router)
+# Authentication router removed - API is now publicly accessible
 
 # Initialize data service
 data_service = DataService()
@@ -217,6 +215,22 @@ def get_cached_data(file_name: str) -> Dict:
         logger.error(f"Error reading data for {file_name}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error loading data: {str(e)}")
 
+# Agreement Management Endpoints (must be before generic {file_name} route)
+@app.get("/api/agreements")
+async def get_agreements():
+    """
+    Get all agreements.
+    
+    Returns:
+        list: List of all agreements
+    """
+    try:
+        agreements_data = read_json_file(JSON_FILES['dataAgreements'])
+        return agreements_data['agreements']
+    except Exception as e:
+        logger.error(f"Error retrieving agreements: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving agreements: {str(e)}")
+
 # Search endpoints (must be before generic {file_name} route)
 @app.get("/api/search")
 def global_search(
@@ -245,7 +259,7 @@ def global_search(
         raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
 
 @app.post("/api/search/rebuild")
-def rebuild_search_index(current_user: dict = Depends(require_admin)):
+def rebuild_search_index():
     """Rebuild the search index (admin only)."""
     try:
         success = search_service.rebuild_index()
@@ -409,7 +423,7 @@ async def get_agreements_by_model(model_short_name: str):
         )
 
 @app.post("/api/models")
-async def create_model(request: CreateModelRequest, current_user: dict = Depends(require_editor_or_admin)):
+async def create_model(request: CreateModelRequest):
     """
     Create a new data model.
     
@@ -436,8 +450,8 @@ async def create_model(request: CreateModelRequest, current_user: dict = Depends
                     detail=f"Model with shortName '{request.shortName}' already exists"
                 )
         
-        # Generate a new ID (max existing ID + 1)
-        new_id = max([m['id'] for m in models_data['models']], default=0) + 1
+        # Generate UUID for new model
+        new_id = str(uuid.uuid4())
         
         # Create the new model from the request
         new_model = {
@@ -487,7 +501,7 @@ async def create_model(request: CreateModelRequest, current_user: dict = Depends
         )
 
 @app.delete("/api/models/{short_name}")
-async def delete_model(short_name: str, current_user: dict = Depends(require_editor_or_admin)):
+async def delete_model(short_name: str):
     """
     Delete a data model by its short name.
     
@@ -545,7 +559,7 @@ async def delete_model(short_name: str, current_user: dict = Depends(require_edi
         )
 
 @app.put("/api/models/{short_name}")
-async def update_model(short_name: str, request: UpdateModelRequest, current_user: dict = Depends(require_editor_or_admin)):
+async def update_model(short_name: str, request: UpdateModelRequest):
     """
     Update a data model by its short name.
     
@@ -704,7 +718,7 @@ def update_search_index(data_type: str, action: str, item: Dict[str, Any] = None
 
 # Agreement Management Endpoints
 @app.post("/api/agreements")
-async def create_agreement(request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+async def create_agreement(request: Dict[str, Any]):
     """
     Create a new agreement.
     
@@ -749,7 +763,7 @@ async def create_agreement(request: Dict[str, Any], current_user: dict = Depends
         raise HTTPException(status_code=500, detail=f"Error creating agreement: {str(e)}")
 
 @app.put("/api/agreements/{agreement_id}")
-async def update_agreement(agreement_id: str, request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+async def update_agreement(agreement_id: str, request: Dict[str, Any]):
     """
     Update an existing agreement.
     
@@ -808,7 +822,7 @@ async def update_agreement(agreement_id: str, request: Dict[str, Any], current_u
         raise HTTPException(status_code=500, detail=f"Error updating agreement: {str(e)}")
 
 @app.delete("/api/agreements/{agreement_id}")
-async def delete_agreement(agreement_id: str, current_user: dict = Depends(require_editor_or_admin)):
+async def delete_agreement(agreement_id: str):
     """
     Delete an agreement by its ID.
     
@@ -859,55 +873,31 @@ async def delete_agreement(agreement_id: str, current_user: dict = Depends(requi
 
 def generate_next_reference_id(reference_data: Dict) -> str:
     """
-    Generate the next available reference ID with format 'ref-XXX'.
+    Generate a unique reference ID using UUID.
     
     Args:
-        reference_data (dict): The current reference data
+        reference_data (dict): The current reference data (unused but kept for compatibility)
         
     Returns:
-        str: The next available ID
+        str: A unique UUID string
     """
-    existing_ids = [item['id'] for item in reference_data['items']]
-    max_number = 0
-    
-    for item_id in existing_ids:
-        if item_id.startswith('ref-'):
-            try:
-                number = int(item_id[4:])  # Extract number after 'ref-'
-                max_number = max(max_number, number)
-            except ValueError:
-                continue  # Skip if not a valid number
-    
-    next_number = max_number + 1
-    return f"ref-{next_number:03d}"  # Format as ref-001, ref-002, etc.
+    return str(uuid.uuid4())
 
 def generate_next_agreement_id(agreements_data: Dict) -> str:
     """
-    Generate the next available agreement ID with format 'agreement-XXX'.
+    Generate a unique agreement ID using UUID.
     
     Args:
-        agreements_data (dict): The current agreements data
+        agreements_data (dict): The current agreements data (unused but kept for compatibility)
         
     Returns:
-        str: The next available ID
+        str: A unique UUID string
     """
-    existing_ids = [agreement['id'] for agreement in agreements_data['agreements']]
-    max_number = 0
-    
-    for item_id in existing_ids:
-        if item_id.startswith('agreement-'):
-            try:
-                number = int(item_id[10:])  # Extract number after 'agreement-'
-                max_number = max(max_number, number)
-            except ValueError:
-                continue  # Skip if not a valid number
-    
-    next_number = max_number + 1
-    return f"agreement-{next_number:03d}"  # Format as agreement-001, agreement-002, etc.
+    return str(uuid.uuid4())
 
 # Reference Data Management Endpoints
 @app.post("/api/reference")
-async def create_reference_item(request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+async def create_reference_item(request: Dict[str, Any]):
     """
     Create a new reference data item.
     
@@ -949,7 +939,7 @@ async def create_reference_item(request: Dict[str, Any], current_user: dict = De
         raise HTTPException(status_code=500, detail=f"Error creating reference item: {str(e)}")
 
 @app.put("/api/reference/{item_id}")
-async def update_reference_item(item_id: str, request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+async def update_reference_item(item_id: str, request: Dict[str, Any]):
     """
     Update an existing reference data item.
     
@@ -1005,7 +995,7 @@ async def update_reference_item(item_id: str, request: Dict[str, Any], current_u
         raise HTTPException(status_code=500, detail=f"Error updating reference item: {str(e)}")
 
 @app.delete("/api/reference/{item_id}")
-async def delete_reference_item(item_id: str, current_user: dict = Depends(require_editor_or_admin)):
+async def delete_reference_item(item_id: str):
     """
     Delete a reference data item by its ID.
     
@@ -1053,7 +1043,7 @@ async def delete_reference_item(item_id: str, current_user: dict = Depends(requi
 
 # Applications CRUD endpoints
 @app.post("/api/applications")
-async def create_application(application: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+async def create_application(application: Dict[str, Any]):
     """
     Create a new application.
     
@@ -1070,9 +1060,8 @@ async def create_application(application: Dict[str, Any], current_user: dict = D
         logger.info(f"Create request for application: {application.get('name', 'Unknown')}")
         applications_data = read_json_file(JSON_FILES['applications'])
         
-        # Generate new ID
-        max_id = max([app['id'] for app in applications_data['applications']]) if applications_data['applications'] else 0
-        new_id = max_id + 1
+        # Generate UUID for new application
+        new_id = str(uuid.uuid4())
         
         # Create new application with ID
         new_application = {
@@ -1080,8 +1069,14 @@ async def create_application(application: Dict[str, Any], current_user: dict = D
             "name": application.get('name', ''),
             "description": application.get('description', ''),
             "domains": application.get('domains', []),
-            "link": application.get('link', '')
+            "link": application.get('link', ''),
+            "email": application.get('email', ''),
+            "lastUpdated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
+        
+        # Add roles field only if provided
+        if 'roles' in application:
+            new_application['roles'] = application['roles']
         
         applications_data['applications'].append(new_application)
         
@@ -1101,7 +1096,7 @@ async def create_application(application: Dict[str, Any], current_user: dict = D
         raise HTTPException(status_code=500, detail=f"Error creating application: {str(e)}")
 
 @app.put("/api/applications/{application_id}")
-async def update_application(application_id: int, application: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+async def update_application(application_id: int, application: Dict[str, Any]):
     """
     Update an existing application by its ID.
     
@@ -1130,13 +1125,21 @@ async def update_application(application_id: int, application: Dict[str, Any], c
             raise HTTPException(status_code=404, detail=f"Application with ID {application_id} not found")
         
         # Update the application
-        applications_data['applications'][app_to_update] = {
+        updated_application = {
             "id": application_id,
             "name": application.get('name', ''),
             "description": application.get('description', ''),
             "domains": application.get('domains', []),
-            "link": application.get('link', '')
+            "link": application.get('link', ''),
+            "email": application.get('email', ''),
+            "lastUpdated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
+        
+        # Add roles field only if provided
+        if 'roles' in application:
+            updated_application['roles'] = application['roles']
+        
+        applications_data['applications'][app_to_update] = updated_application
         
         local_file_path = JSON_FILES['applications']
         write_json_file(local_file_path, applications_data)
@@ -1154,7 +1157,7 @@ async def update_application(application_id: int, application: Dict[str, Any], c
         raise HTTPException(status_code=500, detail=f"Error updating application: {str(e)}")
 
 @app.delete("/api/applications/{application_id}")
-async def delete_application(application_id: int, current_user: dict = Depends(require_editor_or_admin)):
+async def delete_application(application_id: int):
     """
     Delete an application by its ID.
     
@@ -1202,7 +1205,7 @@ async def delete_application(application_id: int, current_user: dict = Depends(r
 
 # Toolkit CRUD endpoints
 @app.post("/api/toolkit")
-async def create_toolkit_component(component: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+async def create_toolkit_component(component: Dict[str, Any]):
     """
     Create a new toolkit component.
     
@@ -1224,36 +1227,8 @@ async def create_toolkit_component(component: Dict[str, Any], current_user: dict
         if component_type not in ['functions', 'containers', 'terraform']:
             raise HTTPException(status_code=400, detail="Invalid component type")
         
-        # For functions, use the function name as the ID
-        if component_type == 'functions':
-            function_name = component.get('name', '')
-            if not function_name:
-                raise HTTPException(status_code=400, detail="Function name is required")
-            
-            # Check if function name already exists
-            existing_names = [item['name'] for item in toolkit_data['toolkit'][component_type]]
-            if function_name in existing_names:
-                raise HTTPException(status_code=400, detail=f"Function with name '{function_name}' already exists")
-            
-            new_id = function_name
-        else:
-            # Generate new ID based on type for other component types
-            existing_ids = [item['id'] for item in toolkit_data['toolkit'][component_type]]
-            if component_type == 'containers':
-                prefix = 'cont_'
-            else:
-                prefix = 'tf_'
-            
-            max_num = 0
-            for item_id in existing_ids:
-                if item_id.startswith(prefix):
-                    try:
-                        num = int(item_id.split('_')[1])
-                        max_num = max(max_num, num)
-                    except:
-                        pass
-            
-            new_id = f"{prefix}{max_num + 1:03d}"
+        # Generate UUID for all component types
+        new_id = str(uuid.uuid4())
         
         # Create new component with ID
         new_component = {
@@ -1307,7 +1282,7 @@ async def create_toolkit_component(component: Dict[str, Any], current_user: dict
         raise HTTPException(status_code=500, detail=f"Error creating toolkit component: {str(e)}")
 
 @app.put("/api/toolkit/{component_type}/{component_id}")
-async def update_toolkit_component(component_type: str, component_id: str, component: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+async def update_toolkit_component(component_type: str, component_id: str, component: Dict[str, Any]):
     """
     Update an existing toolkit component by its ID.
     
@@ -1390,7 +1365,7 @@ async def update_toolkit_component(component_type: str, component_id: str, compo
         raise HTTPException(status_code=500, detail=f"Error updating toolkit component: {str(e)}")
 
 @app.delete("/api/toolkit/{component_type}/{component_id}")
-async def delete_toolkit_component(component_type: str, component_id: str, current_user: dict = Depends(require_editor_or_admin)):
+async def delete_toolkit_component(component_type: str, component_id: str):
     """
     Delete a toolkit component by its ID.
     
@@ -1452,16 +1427,16 @@ def get_policies():
         raise HTTPException(status_code=500, detail=f"Error reading policies: {str(e)}")
 
 @app.post("/api/policies")
-def create_policy(policy: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+def create_policy(policy: Dict[str, Any]):
     """Create a new data policy."""
     try:
         logger.info(f"Create request for new policy: {policy.get('name', 'Unknown')}")
         
         policies_data = read_json_file(JSON_FILES['policies'])
         
-        # Generate new ID if not provided
+        # Generate UUID for new policy if not provided
         if not policy.get('id'):
-            policy['id'] = f"{policy.get('type', 'policy')}_{policy.get('name', 'unknown').lower().replace(' ', '_')}_{int(time.time())}"
+            policy['id'] = str(uuid.uuid4())
         
         # Add timestamp
         policy['lastUpdated'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1485,7 +1460,7 @@ def create_policy(policy: Dict[str, Any], current_user: dict = Depends(require_e
         raise HTTPException(status_code=500, detail=f"Error creating policy: {str(e)}")
 
 @app.put("/api/policies/{policy_id}")
-def update_policy(policy_id: str, policy: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+def update_policy(policy_id: str, policy: Dict[str, Any]):
     """Update an existing data policy."""
     try:
         logger.info(f"Update request for policy: {policy_id}")
@@ -1526,7 +1501,7 @@ def update_policy(policy_id: str, policy: Dict[str, Any], current_user: dict = D
         raise HTTPException(status_code=500, detail=f"Error updating policy: {str(e)}")
 
 @app.delete("/api/policies/{policy_id}")
-def delete_policy(policy_id: str, current_user: dict = Depends(require_editor_or_admin)):
+def delete_policy(policy_id: str):
     """Delete a data policy."""
     try:
         logger.info(f"Delete request for policy: {policy_id}")
@@ -1597,7 +1572,7 @@ def get_performance_metrics():
     return get_performance_stats()
 
 @app.post("/api/admin/reindex")
-async def manual_reindex(file_name: str = None, current_user: dict = Depends(require_admin)):
+async def manual_reindex(file_name: str = None):
     """
     Manually trigger search index reindexing.
     

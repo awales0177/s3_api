@@ -46,7 +46,7 @@ async def changeRole(role_data: RoleRequest):
         
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = create_access_token(
-            data={"sub": user["username"], "role": user["role"]},
+            data={"sub": user["username"], "role": user["roles"][0] if user["roles"] else "reader"},
             expires_delta=access_token_expires
         )
         
@@ -60,7 +60,7 @@ async def changeRole(role_data: RoleRequest):
                 "username": user["username"],
                 "email": user["email"],
                 "full_name": user["full_name"],
-                "role": user["role"]
+                "role": user["roles"][0] if user["roles"] else "reader"
             }
         )
         
