@@ -926,6 +926,9 @@ async def create_reference_item(request: Dict[str, Any]):
         local_file_path = JSON_FILES['reference']
         write_json_file(local_file_path, reference_data)
         
+        # Update search index
+        update_search_index("reference", "add", new_item, new_id)
+        
         logger.info(f"Created new reference item in local file {local_file_path}")
         logger.info(f"Reference item {new_id} created successfully")
         
@@ -982,6 +985,9 @@ async def update_reference_item(item_id: str, request: Dict[str, Any]):
         local_file_path = JSON_FILES['reference']
         write_json_file(local_file_path, reference_data)
         
+        # Update search index
+        update_search_index("reference", "update", updated_item, item_id)
+        
         logger.info(f"Reference item updated in local file {local_file_path}")
         logger.info(f"Reference item {item_id} updated successfully")
         
@@ -1028,6 +1034,9 @@ async def delete_reference_item(item_id: str):
         
         local_file_path = JSON_FILES['reference']
         write_json_file(local_file_path, reference_data)
+        
+        # Update search index
+        update_search_index("reference", "delete", item_id=item_id)
         
         logger.info(f"Reference item deleted from local file {local_file_path}")
         logger.info(f"Reference item {item_id} deleted successfully")
@@ -1082,6 +1091,9 @@ async def create_application(application: Dict[str, Any]):
         
         local_file_path = JSON_FILES['applications']
         write_json_file(local_file_path, applications_data)
+        
+        # Update search index
+        update_search_index("applications", "add", new_application, new_id)
         
         logger.info(f"Application created in local file {local_file_path}")
         logger.info(f"Application {new_id} created successfully")
@@ -1144,6 +1156,9 @@ async def update_application(application_id: int, application: Dict[str, Any]):
         local_file_path = JSON_FILES['applications']
         write_json_file(local_file_path, applications_data)
         
+        # Update search index
+        update_search_index("applications", "update", updated_application, str(application_id))
+        
         logger.info(f"Application updated in local file {local_file_path}")
         logger.info(f"Application {application_id} updated successfully")
         
@@ -1190,6 +1205,9 @@ async def delete_application(application_id: int):
         
         local_file_path = JSON_FILES['applications']
         write_json_file(local_file_path, applications_data)
+        
+        # Update search index
+        update_search_index("applications", "delete", item_id=str(application_id))
         
         logger.info(f"Application deleted from local file {local_file_path}")
         logger.info(f"Application {application_id} deleted successfully")
@@ -1268,6 +1286,9 @@ async def create_toolkit_component(component: Dict[str, Any]):
         
         local_file_path = JSON_FILES['toolkit']
         write_json_file(local_file_path, toolkit_data)
+        
+        # Update search index
+        update_search_index("toolkit", "add", new_component, new_id)
         
         logger.info(f"Toolkit component created in local file {local_file_path}")
         logger.info(f"Component {new_id} created successfully")
@@ -1352,6 +1373,9 @@ async def update_toolkit_component(component_type: str, component_id: str, compo
         local_file_path = JSON_FILES['toolkit']
         write_json_file(local_file_path, toolkit_data)
         
+        # Update search index
+        update_search_index("toolkit", "update", updated_component, component_id)
+        
         logger.info(f"Toolkit component updated in local file {local_file_path}")
         logger.info(f"Component {component_id} updated successfully")
         
@@ -1404,6 +1428,9 @@ async def delete_toolkit_component(component_type: str, component_id: str):
         local_file_path = JSON_FILES['toolkit']
         write_json_file(local_file_path, toolkit_data)
         
+        # Update search index
+        update_search_index("toolkit", "delete", item_id=component_id)
+        
         logger.info(f"Toolkit component deleted from local file {local_file_path}")
         logger.info(f"Component {component_id} deleted successfully")
         
@@ -1448,6 +1475,9 @@ def create_policy(policy: Dict[str, Any]):
         local_file_path = JSON_FILES['policies']
         write_json_file(local_file_path, policies_data)
         
+        # Update search index
+        update_search_index("policies", "add", policy, policy['id'])
+        
         logger.info(f"Policy created successfully with ID: {policy['id']}")
         
         return {
@@ -1487,6 +1517,9 @@ def update_policy(policy_id: str, policy: Dict[str, Any]):
         local_file_path = JSON_FILES['policies']
         write_json_file(local_file_path, policies_data)
         
+        # Update search index
+        update_search_index("policies", "update", policy, policy_id)
+        
         logger.info(f"Policy {policy_id} updated successfully")
         
         return {
@@ -1521,6 +1554,9 @@ def delete_policy(policy_id: str):
         # Write to file
         local_file_path = JSON_FILES['policies']
         write_json_file(local_file_path, policies_data)
+        
+        # Update search index
+        update_search_index("policies", "delete", item_id=policy_id)
         
         logger.info(f"Policy {policy_id} deleted successfully")
         
