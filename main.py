@@ -1,15 +1,18 @@
 from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 import logging
 from time import perf_counter
 import uuid
 
-# Authentication removed - API is now publicly accessible
+# Import authentication modules
+from auth import get_current_user_optional, require_editor_or_admin, require_admin, UserRole
+from endpoints.auth import router as auth_router
 from services.search_service import search_service
 from services.data_service import DataService
+from services.python_introspection_service import python_introspection_service
 from config import Config
 
 # Configure logging
@@ -113,7 +116,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Authentication router removed - API is now publicly accessible
+# Include authentication router
+app.include_router(auth_router)
 
 # Initialize data service
 data_service = DataService()
@@ -178,7 +182,10 @@ JSON_FILES = {
     "reference": "reference.json",
     "toolkit": "toolkit.json",
     "policies": "dataPolicies.json",
-    "dataProducts": "dataProducts.json"
+    "dataProducts": "dataProducts.json",
+    "zones": "zones.json",
+    "glossary": "glossary.json",
+    "statistics": "statistics.json"
 }
 
 # Data type to key mapping for counting items
@@ -192,7 +199,9 @@ DATA_TYPE_KEYS = {
     "reference": "items",
     "toolkit": "toolkit",
     "policies": "policies",
-    "dataProducts": "dataProducts"
+    "dataProducts": "dataProducts",
+    "zones": "zones",
+    "glossary": "terms"
 }
 
 
@@ -320,6 +329,78 @@ def search_suggestions(
     except Exception as e:
         logger.error(f"Error getting search suggestions: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting suggestions: {str(e)}")
+
+@app.get("/api/zones")
+def get_zones():
+    """
+    Get all zones with their associated domains.
+    Zones are read from zones.json and domains are grouped by their zone field.
+    """
+    try:
+        start_time = perf_counter()
+        logger.info("Request for zones - reading from zones.json and grouping domains")
+        
+        # Get zones definitions from zones.json
+        zones_data = get_cached_data("zones")
+        zones_definitions = zones_data.get("zones", [])
+        
+        # Get domains data
+        domains_data = get_cached_data("domains")
+        domains = domains_data.get("domains", [])
+        
+        # Create a map of zone name to zone definition
+        zones_map = {zone["name"]: zone.copy() for zone in zones_definitions}
+        
+        # Initialize domains array for each zone
+        for zone_name in zones_map:
+            zones_map[zone_name]["domains"] = []
+        
+        # Group domains by zone
+        unzoned_domains = []
+        
+        for domain in domains:
+            zone_name = domain.get("zone") or domain.get("zoneName")
+            
+            if not zone_name or zone_name == "Unzoned":
+                unzoned_domains.append(domain)
+            elif zone_name in zones_map:
+                zones_map[zone_name]["domains"].append(domain)
+            else:
+                # Zone not found in definitions, add to unzoned
+                logger.warning(f"Domain '{domain.get('name')}' references zone '{zone_name}' which is not defined in zones.json")
+                unzoned_domains.append(domain)
+        
+        # Convert map to list - this includes ALL zones from zones.json, even if they have no domains
+        zones = list(zones_map.values())
+        
+        # Log zone information for debugging
+        logger.info(f"Loaded {len(zones_definitions)} zone definitions from zones.json")
+        logger.info(f"Found {len(zones)} zones with definitions")
+        logger.info(f"Unzoned domains: {len(unzoned_domains)}")
+        
+        # Add unzoned domains as a zone if there are any
+        if unzoned_domains:
+            zones.append({
+                "id": "unzoned",
+                "name": "Unzoned",
+                "description": "Domains not assigned to a zone",
+                "owner": "System",
+                "lastUpdated": datetime.now().strftime("%Y-%m-%d"),
+                "domains": unzoned_domains
+            })
+        
+        # Sort zones by name
+        zones.sort(key=lambda x: x["name"])
+        
+        log_performance("get_zones", start_time)
+        
+        return {
+            "zones": zones,
+            "total": len(zones)
+        }
+    except Exception as e:
+        logger.error(f"Error getting zones: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting zones: {str(e)}")
 
 @app.get("/api/{file_name}")
 def get_json_file(file_name: str):
@@ -450,8 +531,13 @@ async def create_model(request: CreateModelRequest):
                     detail=f"Model with shortName '{request.shortName}' already exists"
                 )
         
-        # Generate UUID for new model
-        new_id = str(uuid.uuid4())
+        # Generate a new ID (max existing ID + 1)
+        new_id = max([m['id'] for m in models_data['models']], default=0) + 1
+        
+        # Ensure meta has clickCount initialized to 0
+        meta = request.meta.copy() if request.meta else {}
+        if 'clickCount' not in meta:
+            meta['clickCount'] = 0
         
         # Create the new model from the request
         new_model = {
@@ -466,7 +552,7 @@ async def create_model(request: CreateModelRequest):
             'maintainerEmail': request.maintainerEmail,
             'domain': request.domain,
             'referenceData': request.referenceData,
-            'meta': request.meta,
+            'meta': meta,
             'changelog': request.changelog,
             'resources': request.resources,
             'users': request.users,
@@ -476,10 +562,9 @@ async def create_model(request: CreateModelRequest):
         # Add the new model to the array
         models_data['models'].append(new_model)
         
-        # Save the updated data to local file
-        local_file_path = JSON_FILES['models']
-        write_json_file(local_file_path, models_data)
-        logger.info(f"Created new model in local file {local_file_path}")
+        # Save the updated data to S3
+        data_service.write_json_file(JSON_FILES['models'], models_data)
+        logger.info(f"Created new model in S3")
         
         # Update search index
         update_search_index("models", "add", new_model, str(new_id))
@@ -537,7 +622,7 @@ async def delete_model(short_name: str):
         models_data['models'] = [m for m in models_data['models'] if m['shortName'].lower() != short_name.lower()]
         
         # Save the updated data to S3
-        data_service.write_json_file('dataModels.json', models_data)
+        data_service.write_json_file(JSON_FILES['models'], models_data)
         logger.info(f"Model deleted from S3")
         
         # Trigger search reindex for models
@@ -556,6 +641,72 @@ async def delete_model(short_name: str):
         raise HTTPException(
             status_code=500,
             detail=f"Error deleting model: {str(e)}"
+        )
+
+@app.post("/api/models/{short_name}/click")
+async def track_model_click(short_name: str):
+    """
+    Track a click on a data model card and increment the click counter.
+    
+    Args:
+        short_name (str): The short name of the model to track
+        
+    Returns:
+        dict: Success message and updated click count
+        
+    Raises:
+        HTTPException: If the model is not found
+    """
+    try:
+        logger.info(f"Click tracking request for model: {short_name}")
+        
+        # Read current models data
+        models_data = data_service.read_json_file(JSON_FILES['models'])
+        
+        # Find the model to update
+        model_index = None
+        for i, model in enumerate(models_data['models']):
+            if model['shortName'].lower() == short_name.lower():
+                model_index = i
+                break
+        
+        if model_index is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model with short name '{short_name}' not found"
+            )
+        
+        # Get the current model
+        model = models_data['models'][model_index]
+        
+        # Initialize clickCount in meta if it doesn't exist
+        if 'meta' not in model:
+            model['meta'] = {}
+        
+        # Increment click count (initialize to 1 if not present)
+        current_count = model['meta'].get('clickCount', 0)
+        model['meta']['clickCount'] = current_count + 1
+        
+        # Update the model in the array
+        models_data['models'][model_index] = model
+        
+        # Save the updated data to S3
+        data_service.write_json_file(JSON_FILES['models'], models_data)
+        logger.info(f"Updated click count for model {short_name} to {model['meta']['clickCount']}")
+        
+        return {
+            "message": "Click tracked successfully",
+            "shortName": short_name,
+            "clickCount": model['meta']['clickCount']
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error tracking click for model {short_name}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error tracking click: {str(e)}"
         )
 
 @app.put("/api/models/{short_name}")
@@ -595,6 +746,14 @@ async def update_model(short_name: str, request: UpdateModelRequest):
         # Update the model
         old_model = models_data['models'][model_index]
         updated_model = {**old_model, **request.modelData}
+        
+        # Preserve clickCount in meta if it exists in the old model
+        if 'meta' in request.modelData and 'meta' in old_model:
+            old_click_count = old_model['meta'].get('clickCount', 0)
+            if 'clickCount' not in updated_model.get('meta', {}):
+                if 'meta' not in updated_model:
+                    updated_model['meta'] = {}
+                updated_model['meta']['clickCount'] = old_click_count
         
         # Check if shortName is being changed
         old_short_name = old_model.get('shortName')
@@ -658,7 +817,7 @@ async def update_model(short_name: str, request: UpdateModelRequest):
         models_data['models'][model_index] = updated_model
         
         # Save the updated data to S3
-        data_service.write_json_file('dataModels.json', models_data)
+        data_service.write_json_file(JSON_FILES['models'], models_data)
         logger.info(f"Updated S3 file")
         
         # Trigger search reindex for models
@@ -744,13 +903,12 @@ async def create_agreement(request: Dict[str, Any]):
         new_agreement['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         agreements_data['agreements'].append(new_agreement)
-        local_file_path = JSON_FILES['dataAgreements']
-        write_json_file(local_file_path, agreements_data)
+        write_json_file(JSON_FILES['dataAgreements'], agreements_data)
         
         # Update search index
         update_search_index("dataAgreements", "add", new_agreement, new_id)
         
-        logger.info(f"Created new agreement in local file {local_file_path}")
+        logger.info(f"Created new agreement in S3")
         logger.info(f"Agreement {new_id} created successfully")
         
         return {
@@ -803,13 +961,12 @@ async def update_agreement(agreement_id: str, request: Dict[str, Any]):
         ]
         agreements_data['agreements'].append(updated_agreement)
         
-        local_file_path = JSON_FILES['dataAgreements']
-        write_json_file(local_file_path, agreements_data)
+        write_json_file(JSON_FILES['dataAgreements'], agreements_data)
         
         # Update search index
         update_search_index("dataAgreements", "update", updated_agreement, agreement_id)
         
-        logger.info(f"Agreement updated in local file {local_file_path}")
+        logger.info(f"Agreement updated in S3")
         logger.info(f"Agreement {agreement_id} updated successfully")
         
         return {
@@ -853,13 +1010,12 @@ async def delete_agreement(agreement_id: str):
             if a['id'].lower() != agreement_id.lower()
         ]
         
-        local_file_path = JSON_FILES['dataAgreements']
-        write_json_file(local_file_path, agreements_data)
+        write_json_file(JSON_FILES['dataAgreements'], agreements_data)
         
         # Update search index
         update_search_index("dataAgreements", "delete", item_id=agreement_id)
         
-        logger.info(f"Agreement deleted from local file {local_file_path}")
+        logger.info(f"Agreement deleted from S3")
         logger.info(f"Agreement {agreement_id} deleted successfully")
         
         return {
@@ -873,27 +1029,51 @@ async def delete_agreement(agreement_id: str):
 
 def generate_next_reference_id(reference_data: Dict) -> str:
     """
-    Generate a unique reference ID using UUID.
+    Generate the next available reference ID with format 'ref-XXX'.
     
     Args:
-        reference_data (dict): The current reference data (unused but kept for compatibility)
+        reference_data (dict): The current reference data
         
     Returns:
-        str: A unique UUID string
+        str: The next available ID
     """
-    return str(uuid.uuid4())
+    existing_ids = [item['id'] for item in reference_data['items']]
+    max_number = 0
+    
+    for item_id in existing_ids:
+        if item_id.startswith('ref-'):
+            try:
+                number = int(item_id[4:])  # Extract number after 'ref-'
+                max_number = max(max_number, number)
+            except ValueError:
+                continue  # Skip if not a valid number
+    
+    next_number = max_number + 1
+    return f"ref-{next_number:03d}"  # Format as ref-001, ref-002, etc.
 
 def generate_next_agreement_id(agreements_data: Dict) -> str:
     """
-    Generate a unique agreement ID using UUID.
+    Generate the next available agreement ID with format 'agreement-XXX'.
     
     Args:
-        agreements_data (dict): The current agreements data (unused but kept for compatibility)
+        agreements_data (dict): The current agreements data
         
     Returns:
-        str: A unique UUID string
+        str: The next available ID
     """
-    return str(uuid.uuid4())
+    existing_ids = [agreement['id'] for agreement in agreements_data['agreements']]
+    max_number = 0
+    
+    for item_id in existing_ids:
+        if item_id.startswith('agreement-'):
+            try:
+                number = int(item_id[10:])  # Extract number after 'agreement-'
+                max_number = max(max_number, number)
+            except ValueError:
+                continue  # Skip if not a valid number
+    
+    next_number = max_number + 1
+    return f"agreement-{next_number:03d}"  # Format as agreement-001, agreement-002, etc.
 
 # Reference Data Management Endpoints
 @app.post("/api/reference")
@@ -923,13 +1103,12 @@ async def create_reference_item(request: Dict[str, Any]):
         new_item['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         reference_data['items'].append(new_item)
-        local_file_path = JSON_FILES['reference']
-        write_json_file(local_file_path, reference_data)
+        write_json_file(JSON_FILES['reference'], reference_data)
         
         # Update search index
         update_search_index("reference", "add", new_item, new_id)
         
-        logger.info(f"Created new reference item in local file {local_file_path}")
+        logger.info(f"Created new reference item in S3")
         logger.info(f"Reference item {new_id} created successfully")
         
         return {
@@ -982,13 +1161,12 @@ async def update_reference_item(item_id: str, request: Dict[str, Any]):
         ]
         reference_data['items'].append(updated_item)
         
-        local_file_path = JSON_FILES['reference']
-        write_json_file(local_file_path, reference_data)
+        write_json_file(JSON_FILES['reference'], reference_data)
         
         # Update search index
         update_search_index("reference", "update", updated_item, item_id)
         
-        logger.info(f"Reference item updated in local file {local_file_path}")
+        logger.info(f"Reference item updated in S3")
         logger.info(f"Reference item {item_id} updated successfully")
         
         return {
@@ -1032,13 +1210,12 @@ async def delete_reference_item(item_id: str):
             if i['id'].lower() != item_id.lower()
         ]
         
-        local_file_path = JSON_FILES['reference']
-        write_json_file(local_file_path, reference_data)
+        write_json_file(JSON_FILES['reference'], reference_data)
         
         # Update search index
         update_search_index("reference", "delete", item_id=item_id)
         
-        logger.info(f"Reference item deleted from local file {local_file_path}")
+        logger.info(f"Reference item deleted from S3")
         logger.info(f"Reference item {item_id} deleted successfully")
         
         return {
@@ -1049,6 +1226,176 @@ async def delete_reference_item(item_id: str):
     except Exception as e:
         logger.error(f"Error deleting reference item: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting reference item: {str(e)}")
+
+# Glossary Management Endpoints
+@app.post("/api/glossary")
+async def create_glossary_term(request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+    """
+    Create a new glossary term.
+    
+    Args:
+        request (dict): The new glossary term data
+        
+    Returns:
+        dict: Success message and created glossary term info
+        
+    Raises:
+        HTTPException: If creation fails
+    """
+    try:
+        logger.info(f"Create request for new glossary term")
+        glossary_data = read_json_file(JSON_FILES['glossary'])
+        
+        # Generate automatic ID if not provided
+        if not request.get('id'):
+            max_number = 0
+            for term in glossary_data.get('terms', []):
+                if term.get('id', '').startswith('glossary-'):
+                    try:
+                        number = int(term['id'].split('-')[1])
+                        max_number = max(max_number, number)
+                    except (ValueError, IndexError):
+                        continue
+            new_id = f"glossary-{max_number + 1:03d}"
+        else:
+            new_id = request['id']
+        
+        # Check if ID already exists
+        existing_term = next((t for t in glossary_data.get('terms', []) if t.get('id') == new_id), None)
+        if existing_term:
+            raise HTTPException(status_code=400, detail=f"Glossary term with ID '{new_id}' already exists")
+        
+        # Add lastUpdated timestamp and assign the generated ID
+        new_term = request.copy()
+        new_term['id'] = new_id
+        if not new_term.get('lastUpdated'):
+            new_term['lastUpdated'] = datetime.now().strftime('%Y-%m-%d')
+        
+        if 'terms' not in glossary_data:
+            glossary_data['terms'] = []
+        glossary_data['terms'].append(new_term)
+        
+        write_json_file(JSON_FILES['glossary'], glossary_data)
+        
+        logger.info(f"Created new glossary term in S3")
+        logger.info(f"Glossary term {new_id} created successfully")
+        
+        return {
+            "message": "Glossary term created successfully",
+            "id": new_id,
+            "created": True
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating glossary term: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating glossary term: {str(e)}")
+
+@app.put("/api/glossary/{term_id}")
+async def update_glossary_term(term_id: str, request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+    """
+    Update an existing glossary term.
+    
+    Args:
+        term_id (str): The ID of the glossary term to update
+        request (dict): The updated glossary term data
+        
+    Returns:
+        dict: Success message and updated glossary term info
+        
+    Raises:
+        HTTPException: If the glossary term is not found or update fails
+    """
+    try:
+        logger.info(f"Update request for glossary term: {term_id}")
+        glossary_data = read_json_file(JSON_FILES['glossary'])
+        
+        # Find the glossary term to update
+        term_to_update = None
+        for term in glossary_data.get('terms', []):
+            if term.get('id', '').lower() == term_id.lower():
+                term_to_update = term
+                break
+        
+        if not term_to_update:
+            raise HTTPException(status_code=404, detail=f"Glossary term with ID '{term_id}' not found")
+        
+        # Update the glossary term
+        updated_term = term_to_update.copy()
+        updated_term.update(request)
+        updated_term['id'] = term_id  # Ensure ID doesn't change
+        updated_term['lastUpdated'] = datetime.now().strftime('%Y-%m-%d')
+        
+        # Replace the old term with the updated one
+        glossary_data['terms'] = [
+            t for t in glossary_data.get('terms', []) 
+            if t.get('id', '').lower() != term_id.lower()
+        ]
+        glossary_data['terms'].append(updated_term)
+        
+        write_json_file(JSON_FILES['glossary'], glossary_data)
+        
+        logger.info(f"Glossary term updated in S3")
+        logger.info(f"Glossary term {term_id} updated successfully")
+        
+        return {
+            "message": "Glossary term updated successfully",
+            "id": term_id,
+            "updated": True
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating glossary term: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating glossary term: {str(e)}")
+
+@app.delete("/api/glossary/{term_id}")
+async def delete_glossary_term(term_id: str, current_user: dict = Depends(require_editor_or_admin)):
+    """
+    Delete a glossary term by its ID.
+    
+    Args:
+        term_id (str): The ID of the glossary term to delete
+        
+    Returns:
+        dict: Success message and deleted glossary term info
+        
+    Raises:
+        HTTPException: If the glossary term is not found or deletion fails
+    """
+    try:
+        logger.info(f"Delete request for glossary term: {term_id}")
+        glossary_data = read_json_file(JSON_FILES['glossary'])
+        
+        term_to_delete = None
+        for term in glossary_data.get('terms', []):
+            if term.get('id', '').lower() == term_id.lower():
+                term_to_delete = term
+                break
+        
+        if not term_to_delete:
+            raise HTTPException(status_code=404, detail=f"Glossary term with ID '{term_id}' not found")
+        
+        glossary_data['terms'] = [
+            t for t in glossary_data.get('terms', []) 
+            if t.get('id', '').lower() != term_id.lower()
+        ]
+        
+        write_json_file(JSON_FILES['glossary'], glossary_data)
+        
+        logger.info(f"Glossary term deleted from S3")
+        logger.info(f"Glossary term {term_id} deleted successfully")
+        
+        return {
+            "message": "Glossary term deleted successfully",
+            "id": term_id,
+            "deleted": True
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting glossary term: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting glossary term: {str(e)}")
 
 # Applications CRUD endpoints
 @app.post("/api/applications")
@@ -1089,13 +1436,12 @@ async def create_application(application: Dict[str, Any]):
         
         applications_data['applications'].append(new_application)
         
-        local_file_path = JSON_FILES['applications']
-        write_json_file(local_file_path, applications_data)
+        write_json_file(JSON_FILES['applications'], applications_data)
         
         # Update search index
         update_search_index("applications", "add", new_application, new_id)
         
-        logger.info(f"Application created in local file {local_file_path}")
+        logger.info(f"Application created in S3")
         logger.info(f"Application {new_id} created successfully")
         
         return {
@@ -1153,13 +1499,12 @@ async def update_application(application_id: int, application: Dict[str, Any]):
         
         applications_data['applications'][app_to_update] = updated_application
         
-        local_file_path = JSON_FILES['applications']
-        write_json_file(local_file_path, applications_data)
+        write_json_file(JSON_FILES['applications'], applications_data)
         
         # Update search index
         update_search_index("applications", "update", updated_application, str(application_id))
         
-        logger.info(f"Application updated in local file {local_file_path}")
+        logger.info(f"Application updated in S3")
         logger.info(f"Application {application_id} updated successfully")
         
         return {
@@ -1203,13 +1548,12 @@ async def delete_application(application_id: int):
             if app['id'] != application_id
         ]
         
-        local_file_path = JSON_FILES['applications']
-        write_json_file(local_file_path, applications_data)
+        write_json_file(JSON_FILES['applications'], applications_data)
         
         # Update search index
         update_search_index("applications", "delete", item_id=str(application_id))
         
-        logger.info(f"Application deleted from local file {local_file_path}")
+        logger.info(f"Application deleted from S3")
         logger.info(f"Application {application_id} deleted successfully")
         
         return {
@@ -1265,7 +1609,8 @@ async def create_toolkit_component(component: Dict[str, Any]):
             "examples": component.get('examples', []),
             "git": component.get('git', ''),
             "rating": component.get('rating', 5.0),
-            "downloads": 0
+            "downloads": 0,
+            "clickCount": 0
         }
         
         # Add type-specific fields
@@ -1284,13 +1629,12 @@ async def create_toolkit_component(component: Dict[str, Any]):
         
         toolkit_data['toolkit'][component_type].append(new_component)
         
-        local_file_path = JSON_FILES['toolkit']
-        write_json_file(local_file_path, toolkit_data)
+        write_json_file(JSON_FILES['toolkit'], toolkit_data)
         
         # Update search index
         update_search_index("toolkit", "add", new_component, new_id)
         
-        logger.info(f"Toolkit component created in local file {local_file_path}")
+        logger.info(f"Toolkit component created in S3")
         logger.info(f"Component {new_id} created successfully")
         
         return {
@@ -1337,8 +1681,9 @@ async def update_toolkit_component(component_type: str, component_id: str, compo
             raise HTTPException(status_code=404, detail=f"Component with ID {component_id} not found")
         
         # Update the component
+        existing_component = toolkit_data['toolkit'][component_type][comp_to_update]
         updated_component = {
-            **toolkit_data['toolkit'][component_type][comp_to_update],
+            **existing_component,
             "name": component.get('name', ''),
             "displayName": component.get('displayName', component.get('name', '')),
             "description": component.get('description', ''),
@@ -1353,6 +1698,9 @@ async def update_toolkit_component(component_type: str, component_id: str, compo
             "git": component.get('git', ''),
             "rating": component.get('rating', 5.0)
         }
+        # Preserve clickCount if it exists
+        if 'clickCount' in existing_component:
+            updated_component['clickCount'] = existing_component['clickCount']
         
         # Update type-specific fields
         if component_type == 'functions':
@@ -1370,13 +1718,12 @@ async def update_toolkit_component(component_type: str, component_id: str, compo
         
         toolkit_data['toolkit'][component_type][comp_to_update] = updated_component
         
-        local_file_path = JSON_FILES['toolkit']
-        write_json_file(local_file_path, toolkit_data)
+        write_json_file(JSON_FILES['toolkit'], toolkit_data)
         
         # Update search index
         update_search_index("toolkit", "update", updated_component, component_id)
         
-        logger.info(f"Toolkit component updated in local file {local_file_path}")
+        logger.info(f"Toolkit component updated in S3")
         logger.info(f"Component {component_id} updated successfully")
         
         return {
@@ -1387,6 +1734,78 @@ async def update_toolkit_component(component_type: str, component_id: str, compo
     except Exception as e:
         logger.error(f"Error updating toolkit component: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error updating toolkit component: {str(e)}")
+
+@app.post("/api/toolkit/{component_type}/{component_id}/click")
+async def track_toolkit_component_click(component_type: str, component_id: str):
+    """
+    Track a click on a toolkit component card and increment the click counter.
+    
+    Args:
+        component_type (str): The type of component (functions, containers, terraform)
+        component_id (str): The ID of the component to track
+        
+    Returns:
+        dict: Success message and updated click count
+        
+    Raises:
+        HTTPException: If the component is not found
+    """
+    try:
+        logger.info(f"Click tracking request for toolkit component: {component_type}/{component_id}")
+        
+        if component_type not in ['functions', 'containers', 'terraform']:
+            raise HTTPException(status_code=400, detail="Invalid component type")
+        
+        # Read current toolkit data
+        toolkit_data = read_json_file(JSON_FILES['toolkit'])
+        
+        # Find the component to update
+        component_index = None
+        components = toolkit_data['toolkit'].get(component_type, [])
+        
+        for i, component in enumerate(components):
+            if component['id'] == component_id:
+                component_index = i
+                break
+        
+        if component_index is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Component with ID '{component_id}' not found in {component_type}"
+            )
+        
+        # Get the current component
+        component = components[component_index]
+        
+        # Initialize clickCount if it doesn't exist
+        if 'clickCount' not in component:
+            component['clickCount'] = 0
+        
+        # Increment click count
+        component['clickCount'] = component.get('clickCount', 0) + 1
+        
+        # Update the component in the array
+        toolkit_data['toolkit'][component_type][component_index] = component
+        
+        # Save the updated data to S3
+        write_json_file(JSON_FILES['toolkit'], toolkit_data)
+        logger.info(f"Updated click count for {component_type}/{component_id} to {component['clickCount']}")
+        
+        return {
+            "message": "Click tracked successfully",
+            "componentType": component_type,
+            "componentId": component_id,
+            "clickCount": component['clickCount']
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error tracking toolkit component click: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error tracking click: {str(e)}"
+        )
 
 @app.delete("/api/toolkit/{component_type}/{component_id}")
 async def delete_toolkit_component(component_type: str, component_id: str):
@@ -1431,7 +1850,7 @@ async def delete_toolkit_component(component_type: str, component_id: str):
         # Update search index
         update_search_index("toolkit", "delete", item_id=component_id)
         
-        logger.info(f"Toolkit component deleted from local file {local_file_path}")
+        logger.info(f"Toolkit component deleted from S3")
         logger.info(f"Component {component_id} deleted successfully")
         
         return {
@@ -1442,6 +1861,51 @@ async def delete_toolkit_component(component_type: str, component_id: str):
     except Exception as e:
         logger.error(f"Error deleting toolkit component: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting toolkit component: {str(e)}")
+
+@app.post("/api/toolkit/import-from-library")
+async def import_functions_from_library(
+    package_name: str = Query(..., description="Python package name to install and introspect"),
+    module_path: Optional[str] = Query(None, description="Optional specific module path within the package"),
+    pypi_url: Optional[str] = Query(None, description="Optional custom PyPI URL or index URL (e.g., 'https://pypi.org/simple' or 'https://custom-pypi.example.com/simple')"),
+    bulk_mode: bool = Query(False, description="If true, import functions from all submodules"),
+    current_user: dict = Depends(require_editor_or_admin)
+):
+    """
+    Install a Python library and extract function documentation from docstrings.
+    
+    Args:
+        package_name: Name of the Python package (e.g., 'pandas', 'numpy')
+        module_path: Optional specific module to import (e.g., 'pandas.io')
+        pypi_url: Optional custom PyPI URL or index URL for private repositories
+        bulk_mode: If true, import functions from all submodules recursively
+        
+    Returns:
+        dict: List of discovered functions with extracted metadata
+    """
+    try:
+        logger.info(f"Import request for library: {package_name}, module: {module_path}, pypi_url: {pypi_url}, bulk_mode: {bulk_mode}")
+        
+        if bulk_mode:
+            result = python_introspection_service.get_all_functions_from_package(package_name, module_path, pypi_url, include_submodules=True)
+        else:
+            result = python_introspection_service.get_functions_from_package(package_name, module_path, pypi_url)
+        
+        if not result["success"]:
+            raise HTTPException(
+                status_code=400,
+                detail=result["message"]
+            )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error importing from library: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error importing from library: {str(e)}"
+        )
 
 @app.get("/api/policies")
 def get_policies():
@@ -1472,8 +1936,7 @@ def create_policy(policy: Dict[str, Any]):
         policies_data['policies'].append(policy)
         
         # Write to file
-        local_file_path = JSON_FILES['policies']
-        write_json_file(local_file_path, policies_data)
+        write_json_file(JSON_FILES['policies'], policies_data)
         
         # Update search index
         update_search_index("policies", "add", policy, policy['id'])
@@ -1514,8 +1977,7 @@ def update_policy(policy_id: str, policy: Dict[str, Any]):
         policies_data['policies'][existing_policy] = policy
         
         # Write to file
-        local_file_path = JSON_FILES['policies']
-        write_json_file(local_file_path, policies_data)
+        write_json_file(JSON_FILES['policies'], policies_data)
         
         # Update search index
         update_search_index("policies", "update", policy, policy_id)
@@ -1552,8 +2014,7 @@ def delete_policy(policy_id: str):
             raise HTTPException(status_code=404, detail=f"Policy with ID {policy_id} not found")
         
         # Write to file
-        local_file_path = JSON_FILES['policies']
-        write_json_file(local_file_path, policies_data)
+        write_json_file(JSON_FILES['policies'], policies_data)
         
         # Update search index
         update_search_index("policies", "delete", item_id=policy_id)
@@ -1608,7 +2069,7 @@ def get_performance_metrics():
     return get_performance_stats()
 
 @app.post("/api/admin/reindex")
-async def manual_reindex(file_name: str = None):
+async def manual_reindex(file_name: str = None, current_user: dict = Depends(require_admin)):
     """
     Manually trigger search index reindexing.
     
@@ -1645,6 +2106,162 @@ async def manual_reindex(file_name: str = None):
             status_code=500,
             detail=f"Reindex failed: {str(e)}"
         )
+
+# Statistics endpoints
+@app.post("/api/statistics/page-view")
+async def track_page_view(page: str = Query(..., description="Page path/name to track")):
+    """
+    Track a page view.
+    
+    Args:
+        page (str): The page path/name (e.g., 'models', 'agreements', 'home')
+        
+    Returns:
+        dict: Success message
+    """
+    try:
+        # Get current date in YYYY-MM-DD format
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # Read or initialize statistics file
+        try:
+            stats_data = read_json_file(JSON_FILES['statistics'])
+        except HTTPException:
+            # File doesn't exist, create new structure
+            stats_data = {
+                "pageViews": {},
+                "siteVisits": {
+                    "daily": {},
+                    "total": 0
+                },
+                "lastUpdated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+        
+        # Initialize page if it doesn't exist
+        if page not in stats_data['pageViews']:
+            stats_data['pageViews'][page] = {
+                "daily": {},
+                "total": 0
+            }
+        
+        # Increment daily count
+        if today not in stats_data['pageViews'][page]['daily']:
+            stats_data['pageViews'][page]['daily'][today] = 0
+        
+        stats_data['pageViews'][page]['daily'][today] += 1
+        stats_data['pageViews'][page]['total'] += 1
+        stats_data['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Save updated statistics
+        write_json_file(JSON_FILES['statistics'], stats_data)
+        
+        logger.info(f"Tracked page view for {page} on {today}")
+        
+        return {
+            "message": "Page view tracked successfully",
+            "page": page,
+            "date": today,
+            "dailyCount": stats_data['pageViews'][page]['daily'][today],
+            "totalCount": stats_data['pageViews'][page]['total']
+        }
+        
+    except Exception as e:
+        logger.error(f"Error tracking page view: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error tracking page view: {str(e)}")
+
+@app.post("/api/statistics/site-visit")
+async def track_site_visit():
+    """
+    Track a site visit (unique session).
+    This should only be called once per session.
+    
+    Returns:
+        dict: Success message and updated site visit count
+    """
+    try:
+        # Get current date in YYYY-MM-DD format
+        today = datetime.now().strftime('%Y-%m-%d')
+        
+        # Read or initialize statistics file
+        try:
+            stats_data = read_json_file(JSON_FILES['statistics'])
+        except HTTPException:
+            # File doesn't exist, create new structure
+            stats_data = {
+                "pageViews": {},
+                "siteVisits": {
+                    "daily": {},
+                    "total": 0
+                },
+                "lastUpdated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+        
+        # Initialize siteVisits if it doesn't exist (for backward compatibility)
+        if 'siteVisits' not in stats_data:
+            stats_data['siteVisits'] = {
+                "daily": {},
+                "total": 0
+            }
+        
+        # Increment daily site visit count
+        if today not in stats_data['siteVisits']['daily']:
+            stats_data['siteVisits']['daily'][today] = 0
+        
+        stats_data['siteVisits']['daily'][today] += 1
+        stats_data['siteVisits']['total'] += 1
+        stats_data['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Save updated statistics
+        write_json_file(JSON_FILES['statistics'], stats_data)
+        
+        logger.info(f"Tracked site visit on {today}")
+        
+        return {
+            "message": "Site visit tracked successfully",
+            "date": today,
+            "dailyCount": stats_data['siteVisits']['daily'][today],
+            "totalCount": stats_data['siteVisits']['total']
+        }
+        
+    except Exception as e:
+        logger.error(f"Error tracking site visit: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error tracking site visit: {str(e)}")
+
+@app.get("/api/statistics")
+def get_statistics(current_user: dict = Depends(require_admin)):
+    """
+    Get page view statistics (admin only).
+    
+    Returns:
+        dict: Statistics data with daily views per page and site visits
+    """
+    try:
+        # Read statistics file
+        try:
+            stats_data = read_json_file(JSON_FILES['statistics'])
+        except HTTPException:
+            # File doesn't exist, return empty structure
+            return {
+                "pageViews": {},
+                "siteVisits": {
+                    "daily": {},
+                    "total": 0
+                },
+                "lastUpdated": None
+            }
+        
+        # Ensure siteVisits exists (for backward compatibility)
+        if 'siteVisits' not in stats_data:
+            stats_data['siteVisits'] = {
+                "daily": {},
+                "total": 0
+            }
+        
+        return stats_data
+        
+    except Exception as e:
+        logger.error(f"Error getting statistics: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting statistics: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
