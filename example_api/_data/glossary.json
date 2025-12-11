@@ -1,0 +1,53 @@
+{
+  "terms": [
+    {
+      "id": "glossary-003",
+      "term": "Data Lineage",
+      "definition": "The tracking of data from its source through various transformations and processes to its final destination. Data lineage helps understand data flow and dependencies.",
+      "category": "Data Governance",
+      "documentation": "https://docs.example.com/data-lineage",
+      "lastUpdated": "2025-12-06",
+      "markdown": "## hi"
+    },
+    {
+      "id": "glossary-002",
+      "term": "Data Product",
+      "definition": "A reusable data asset that is packaged, documented, and made available for consumption by data consumers. Data products typically include datasets, APIs, or analytical models.",
+      "category": "Data Management",
+      "documentation": "https://docs.example.com/data-products",
+      "lastUpdated": "2025-12-06",
+      "markdown": "# 🚀 **Data Product**\n*A sleek, modern project that does something awesome*\n\n![Status](https://img.shields.io/badge/status-active-brightgreen.svg)\n![License](https://img.shields.io/badge/license-MIT-blue.svg)\n![Build](https://img.shields.io/badge/build-passing-success.svg)\n\n---\n\n## ✨ Features\n\n- ⚡ **Fast & lightweight**\n- 🎨 **Clean architecture**\n- 🧩 **Modular design**\n- 📦 **Easy to integrate**\n- 🔍 **Great for metadata, ETL, or catalog projects**\n\n---\n\n## 📁 Project Structure\n\n\n---\n\n## 📊 Example Table (Tech Stack)\n\n| Category       | Tools / Technologies |\n|----------------|----------------------|\n| 🖥️ Frontend    | React, Vite, Tailwind |\n| ⚙️ Backend     | FastAPI, Python, Node |\n| ☁️ Cloud       | AWS (EKS, S3, Lambda) |\n| 🗄️ Data Layer  | Postgres, DuckDB, Dremio |\n| 🔧 DevOps      | Docker, ArgoCD, Helm |\n\n---\n\n## 🛠 Installation\n\n```bash\ngit clone https://github.com/your/repo.git\ncd repo\nnpm install\nnpm run dev\n"
+    },
+    {
+      "id": "glossary-004",
+      "term": "hi",
+      "definition": "hi",
+      "category": "",
+      "taggedModels": [],
+      "documentation": "",
+      "lastUpdated": "2025-12-11"
+    },
+    {
+      "id": "glossary-005",
+      "term": "dd",
+      "definition": "dd",
+      "category": "",
+      "taggedModels": [],
+      "documentation": "",
+      "lastUpdated": "2025-12-11"
+    },
+    {
+      "id": "glossary-001",
+      "term": "Data Catalog",
+      "definition": "A centralized inventory of data assets that provides metadata, documentation, and search capabilities to help users discover and understand available data resources.",
+      "category": "Data",
+      "taggedModels": [
+        "CUST"
+      ],
+      "documentation": "https://docs.example.com/data-catalog",
+      "link": "https://example.com/data-catalog",
+      "lastUpdated": "2025-12-10",
+      "markdown": "Hi"
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "rules": [
+    {
+      "id": "rule-001",
+      "name": "All ways lowercase",
+      "description": "All ways lowercase every feild",
+      "modelShortName": "CUST",
+      "taggedObjects": [
+        "person"
+      ],
+      "taggedColumns": [
+        "id"
+      ],
+      "taggedFunctions": [
+        "0d66eafa-199f-420f-83b3-47753d2a7471"
+      ],
+      "ruleType": "validation",
+      "enabled": true,
+      "lastUpdated": "2025-12-06 04:43:48",
+      "createdBy": "bypass_user",
+      "updatedBy": "bypass_user"
+    },
+    {
+      "name": "Pyspark version",
+      "description": "always increase",
+      "modelShortName": "CUST",
+      "taggedObjects": [
+        "Catalog"
+      ],
+      "taggedColumns": [
+        "1.0.0"
+      ],
+      "taggedFunctions": [
+        "dfb5764e-0d55-4f4a-8cf3-149d799b3c8e"
+      ],
+      "ruleType": "business",
+      "enabled": true,
+      "id": "rule-002",
+      "lastUpdated": "2025-12-06 05:08:10",
+      "createdBy": "bypass_user"
+    },
+    {
+      "name": "New",
+      "description": "general",
+      "modelShortName": "CUST",
+      "taggedObjects": [
+        "all"
+      ],
+      "taggedColumns": [
+        "all"
+      ],
+      "taggedFunctions": [],
+      "ruleType": "validation",
+      "enabled": true,
+      "id": "rule-003",
+      "lastUpdated": "2025-12-06 05:13:40",
+      "createdBy": "bypass_user"
+    },
+    {
+      "name": "UUID test",
+      "description": "Always use UUIDs",
+      "modelShortName": "CUST",
+      "taggedObjects": [
+        "all"
+      ],
+      "taggedColumns": [
+        "all"
+      ],
+      "taggedFunctions": [],
+      "ruleType": "validation",
+      "enabled": true,
+      "id": "a881f97a-6cf1-46b4-a5a7-41eb0cd31cfb",
+      "lastUpdated": "2025-12-06 16:16:53",
+      "createdBy": "bypass_user",
+      "documentation": "https://www.google.com/",
+      "updatedBy": "bypass_user"
+    },
+    {
+      "name": "Primary configuration file",
+      "description": "z",
+      "documentation": "a",
+      "modelShortName": "CUST",
+      "taggedObjects": [
+        "all"
+      ],
+      "taggedColumns": [
+        "all"
+      ],
+      "taggedFunctions": [],
+      "ruleType": "validation",
+      "enabled": true,
+      "id": "dd80303e-a403-460a-8265-d8a81496dcd1",
+      "lastUpdated": "2025-12-09 20:47:48",
+      "createdBy": "bypass_user"
+    },
+    {
+      "name": "f",
+      "description": "",
+      "documentation": "",
+      "modelShortName": "CUST",
+      "taggedObjects": [
+        "all"
+      ],
+      "taggedColumns": [
+        "all"
+      ],
+      "taggedFunctions": [],
+      "ruleType": "validation",
+      "enabled": true,
+      "id": "d7e114d6-2cef-4f6f-bd5c-1216e4a3729c",
+      "lastUpdated": "2025-12-09 22:31:49",
+      "createdBy": "bypass_user"
+    }
+  ]
+}

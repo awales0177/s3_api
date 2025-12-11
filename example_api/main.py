@@ -1,9 +1,16 @@
-from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi import FastAPI, HTTPException, Depends, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
+import json
+import os
 from typing import Dict, Any, List, Optional
-from datetime import datetime
+import secrets
+import requests
+from datetime import datetime, timedelta
 import logging
+import threading
+import time
 from time import perf_counter
 import uuid
 
@@ -11,9 +18,7 @@ import uuid
 from auth import get_current_user_optional, require_editor_or_admin, require_admin, UserRole
 from endpoints.auth import router as auth_router
 from services.search_service import search_service
-from services.data_service import DataService
 from services.python_introspection_service import python_introspection_service
-from config import Config
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -25,19 +30,29 @@ performance_metrics = {
         "total": 0,
         "by_endpoint": {},
         "response_times": []
+    },
+    "github": {
+        "requests": 0,
+        "errors": 0,
+        "response_times": []
     }
 }
 
-def log_performance(endpoint: str, start_time: float):
+def log_performance(endpoint: str, start_time: float, github_request: bool = False):
     """Log performance metrics for an API request."""
     duration = perf_counter() - start_time
     performance_metrics["requests"]["total"] += 1
     performance_metrics["requests"]["by_endpoint"][endpoint] = performance_metrics["requests"]["by_endpoint"].get(endpoint, 0) + 1
     performance_metrics["requests"]["response_times"].append(duration)
+    
+    if github_request:
+        performance_metrics["github"]["requests"] += 1
+        performance_metrics["github"]["response_times"].append(duration)
 
 def get_performance_stats():
     """Calculate performance statistics."""
     response_times = performance_metrics["requests"]["response_times"]
+    github_times = performance_metrics["github"]["response_times"]
     
     stats = {
         "total_requests": performance_metrics["requests"]["total"],
@@ -45,6 +60,10 @@ def get_performance_stats():
         "cache": {
             "status": "disabled",
             "message": "All data is read fresh from files"
+        },
+        "github": {
+            "total_requests": performance_metrics["github"]["requests"],
+            "errors": performance_metrics["github"]["errors"]
         }
     }
     
@@ -56,27 +75,15 @@ def get_performance_stats():
             "p95": sorted(response_times)[int(len(response_times) * 0.95)]
         }
     
+    if github_times:
+        stats["github"]["response_times"] = {
+            "avg": sum(github_times) / len(github_times),
+            "min": min(github_times),
+            "max": max(github_times),
+            "p95": sorted(github_times)[int(len(github_times) * 0.95)]
+        }
+    
     return stats
-
-def trigger_reindex(file_name: str = None):
-    """Trigger search index reindexing for a specific file or all files."""
-    try:
-        if file_name:
-            logger.info(f"Triggering reindex for file: {file_name}")
-            success = search_service.reindex_file(file_name)
-        else:
-            logger.info("Triggering full search reindex")
-            success = search_service.reindex()
-        
-        if success:
-            logger.info("Search reindex completed successfully")
-        else:
-            logger.error("Search reindex failed")
-        
-        return success
-    except Exception as e:
-        logger.error(f"Error triggering reindex: {e}")
-        return False
 
 # API Documentation
 app = FastAPI(
@@ -119,17 +126,19 @@ app.add_middleware(
 # Include authentication router
 app.include_router(auth_router)
 
-# Initialize data service
-data_service = DataService()
+# GitHub configuration
+GITHUB_RAW_BASE_URL = "https://raw.githubusercontent.com/awales0177/test_data/main"
+CACHE_DURATION = timedelta(minutes=15)
+PASSTHROUGH_MODE = False  # Can be toggled via environment variable
+TEST_MODE = True  # Set to True to use local _data files instead of GitHub
 
 # Log server configuration
 logger.info("=" * 50)
 logger.info("Server Configuration:")
-logger.info(f"Data Source: {Config.get_mode_description()}")
-logger.info(f"S3 Mode: {'ENABLED' if Config.S3_MODE else 'DISABLED'}")
+logger.info(f"Mode: {'PASSTHROUGH' if PASSTHROUGH_MODE else 'DIRECT'}")
+logger.info(f"Test Mode: {'ENABLED' if TEST_MODE else 'DISABLED'}")
 logger.info(f"Caching: DISABLED - Always fresh data")
-logger.info(f"S3 Bucket: {Config.S3_BUCKET_NAME}")
-logger.info(f"AWS Region: {Config.AWS_REGION}")
+logger.info(f"GitHub Base URL: {GITHUB_RAW_BASE_URL}")
 logger.info("=" * 50)
 
 # Initialize search index
@@ -142,9 +151,32 @@ except Exception as e:
     logger.error(f"Failed to initialize search index: {e}")
     logger.info("Search functionality will be limited until index is rebuilt")
 
+# Cache storage - Disabled
+# cache = {
+#     "data": {},
+#     "last_updated": {}
+# }
 
+# Basic authentication
+security = HTTPBasic()
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "admin"  # In production, use environment variables
+
+def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
+    correct_username = secrets.compare_digest(credentials.username, ADMIN_USERNAME)
+    correct_password = secrets.compare_digest(credentials.password, ADMIN_PASSWORD)
+    if not (correct_username and correct_password):
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return credentials
 
 # Data models
+class JSONData(BaseModel):
+    data: Dict[str, Any] = Field(..., description="The JSON data to be stored")
+
 class CreateModelRequest(BaseModel):
     shortName: str = Field(..., description="Short name of the new model")
     name: str = Field(..., description="Name of the new model")
@@ -166,18 +198,15 @@ class UpdateModelRequest(BaseModel):
     modelData: Dict[str, Any] = Field(..., description="Updated model data")
     updateAssociatedLinks: bool = Field(True, description="Whether to update agreements that reference this model")
 
-class PaginationParams(BaseModel):
-    page: int = Field(1, ge=1, description="Page number")
-    page_size: int = Field(10, ge=1, le=100, description="Items per page")
-
-class JSONData(BaseModel):
-    data: Dict[str, Any] = Field(..., description="The JSON data to be stored")
-
 class FileList(BaseModel):
     files: List[str] = Field(..., description="List of available file names")
 
 class ItemCount(BaseModel):
     count: int = Field(..., description="Number of items in the data file")
+
+class PaginationParams(BaseModel):
+    page: int = Field(1, ge=1, description="Page number")
+    page_size: int = Field(10, ge=1, le=100, description="Items per page")
 
 # File paths mapping
 JSON_FILES = {
@@ -191,7 +220,7 @@ JSON_FILES = {
     "reference": "reference.json",
     "toolkit": "toolkit.json",
     "policies": "dataPolicies.json",
-    "dataProducts": "dataProducts.json",
+    "zones": "zones.json",
     "glossary": "glossary.json",
     "statistics": "statistics.json",
     "rules": "rules.json",
@@ -209,45 +238,87 @@ DATA_TYPE_KEYS = {
     "reference": "items",
     "toolkit": "toolkit",
     "policies": "policies",
-    "dataProducts": "dataProducts",
+    "zones": "zones",
     "glossary": "terms"
 }
 
+def fetch_from_github(file_name: str) -> Dict:
+    """Fetch data from GitHub raw content."""
+    start_time = perf_counter()
+    if file_name not in JSON_FILES:
+        logger.error(f"File {file_name} not found in JSON_FILES mapping")
+        raise HTTPException(status_code=404, detail="File not found")
+    
+    url = f"{GITHUB_RAW_BASE_URL}/{JSON_FILES[file_name]}"
+    logger.info(f"Fetching data from GitHub: {url}")
+    try:
+        response = requests.get(url)
+        logger.info(f"GitHub response status: {response.status_code}")
+        if response.status_code == 404:
+            logger.error(f"File not found on GitHub: {url}")
+            raise HTTPException(status_code=404, detail="File not found on GitHub")
+        if response.status_code != 200:
+            performance_metrics["github"]["errors"] += 1
+            logger.error(f"GitHub API error: {response.status_code} - {response.text}")
+            raise HTTPException(status_code=500, detail=f"GitHub API error: {response.status_code}")
+        
+        data = response.json()
+        logger.info(f"Successfully fetched and parsed JSON for {file_name}")
+        log_performance("github_fetch", start_time, github_request=True)
+        return data
+    except requests.exceptions.RequestException as e:
+        performance_metrics["github"]["errors"] += 1
+        logger.error(f"Network error fetching from GitHub: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Network error: {str(e)}")
+    except json.JSONDecodeError as e:
+        performance_metrics["github"]["errors"] += 1
+        logger.error(f"Invalid JSON response from GitHub: {str(e)}")
+        raise HTTPException(status_code=500, detail="Invalid JSON response from GitHub")
+    except Exception as e:
+        performance_metrics["github"]["errors"] += 1
+        logger.error(f"Unexpected error fetching from GitHub: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
+# Cache cleanup disabled
+# def cleanup_stale_cache():
+#     """Remove cache entries that are older than CACHE_DURATION."""
+#     current_time = datetime.now()
+#     stale_files = [
+#         file_name for file_name, last_updated in cache["last_updated"].items()
+#         if current_time - last_updated > CACHE_DURATION
+#     ]
+#     
+#     for file_name in stale_files:
+#         logger.info(f"Removing stale cache for {file_name}")
+#         del cache["data"][file_name]
+#         del cache["last_updated"][file_name]
 
 def get_cached_data(file_name: str) -> Dict:
-    """Get data from the configured data source (no caching)."""
+    """Get data directly from local files (no caching)."""
     start_time = perf_counter()
-    logger.info(f"Reading data from {Config.get_data_source()} for {file_name}")
+    logger.info(f"Reading data directly from local files for {file_name}")
     
-    try:
-        data = data_service.read_json_file(JSON_FILES[file_name])
-        if data is not None:
-            logger.info(f"Data loaded successfully for {file_name}")
-            log_performance(f"{Config.get_data_source()}_read", start_time)
+    if TEST_MODE:
+        logger.info(f"Reading from local _data files for {file_name}")
+        try:
+            data = read_json_file(JSON_FILES[file_name])
+            logger.info(f"Local file loaded successfully for {file_name}")
+            log_performance("local_file_read", start_time)
             return data
-        else:
-            logger.error(f"Failed to load data for {file_name}")
-            raise HTTPException(status_code=500, detail=f"Failed to load data for {file_name}")
-    except Exception as e:
-        logger.error(f"Error reading data for {file_name}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error loading data: {str(e)}")
-
-# Agreement Management Endpoints (must be before generic {file_name} route)
-@app.get("/api/agreements")
-async def get_agreements():
-    """
-    Get all agreements.
-    
-    Returns:
-        list: List of all agreements
-    """
-    try:
-        agreements_data = read_json_file(JSON_FILES['dataAgreements'])
-        return agreements_data['agreements']
-    except Exception as e:
-        logger.error(f"Error retrieving agreements: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error retrieving agreements: {str(e)}")
+        except Exception as e:
+            logger.error(f"Error reading local file {file_name}: {str(e)}")
+            # Fallback to GitHub if local file fails
+            logger.info(f"Falling back to GitHub for {file_name}")
+            data = fetch_from_github(file_name)
+            logger.info(f"GitHub fallback loaded for {file_name}")
+            log_performance("github_fallback", start_time)
+            return data
+    else:
+        logger.info(f"Fetching from GitHub for {file_name}")
+        data = fetch_from_github(file_name)
+        logger.info(f"GitHub data loaded for {file_name}")
+        log_performance("github_fetch", start_time)
+        return data
 
 # Search endpoints (must be before generic {file_name} route)
 @app.get("/api/search")
@@ -277,7 +348,7 @@ def global_search(
         raise HTTPException(status_code=500, detail=f"Search error: {str(e)}")
 
 @app.post("/api/search/rebuild")
-def rebuild_search_index():
+def rebuild_search_index(current_user: dict = Depends(require_admin)):
     """Rebuild the search index (admin only)."""
     try:
         success = search_service.rebuild_index()
@@ -339,16 +410,272 @@ def search_suggestions(
         logger.error(f"Error getting search suggestions: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting suggestions: {str(e)}")
 
+@app.get("/api/zones")
+def get_zones():
+    """
+    Get all zones with their associated domains.
+    Zones are read from zones.json and domains are grouped by their zone field.
+    """
+    try:
+        start_time = perf_counter()
+        logger.info("Request for zones - reading from zones.json and grouping domains")
+        
+        # Get zones definitions from zones.json
+        zones_data = get_cached_data("zones") if not PASSTHROUGH_MODE else fetch_from_github("zones")
+        zones_definitions = zones_data.get("zones", [])
+        
+        # Get domains data
+        domains_data = get_cached_data("domains") if not PASSTHROUGH_MODE else fetch_from_github("domains")
+        domains = domains_data.get("domains", [])
+        
+        # Create a map of zone name to zone definition
+        zones_map = {zone["name"]: zone.copy() for zone in zones_definitions}
+        
+        # Initialize domains array for each zone
+        for zone_name in zones_map:
+            zones_map[zone_name]["domains"] = []
+        
+        # Group domains by zone
+        unzoned_domains = []
+        
+        for domain in domains:
+            zone_name = domain.get("zone") or domain.get("zoneName")
+            
+            if not zone_name or zone_name == "Unzoned":
+                unzoned_domains.append(domain)
+            elif zone_name in zones_map:
+                zones_map[zone_name]["domains"].append(domain)
+            else:
+                # Zone not found in definitions, add to unzoned
+                logger.warning(f"Domain '{domain.get('name')}' references zone '{zone_name}' which is not defined in zones.json")
+                unzoned_domains.append(domain)
+        
+        # Convert map to list - this includes ALL zones from zones.json, even if they have no domains
+        zones = list(zones_map.values())
+        
+        # Log zone information for debugging
+        logger.info(f"Loaded {len(zones_definitions)} zone definitions from zones.json")
+        logger.info(f"Found {len(zones)} zones with definitions")
+        logger.info(f"Unzoned domains: {len(unzoned_domains)}")
+        
+        # Add unzoned domains as a zone if there are any
+        if unzoned_domains:
+            zones.append({
+                "id": "unzoned",
+                "name": "Unzoned",
+                "description": "Domains not assigned to a zone",
+                "owner": "System",
+                "lastUpdated": datetime.now().strftime("%Y-%m-%d"),
+                "domains": unzoned_domains
+            })
+        
+        # Sort zones by name
+        zones.sort(key=lambda x: x["name"])
+        
+        log_performance("get_zones", start_time)
+        
+        return {
+            "zones": zones,
+            "total": len(zones)
+        }
+    except Exception as e:
+        logger.error(f"Error getting zones: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting zones: {str(e)}")
+
+# Country rules endpoints (must come before generic {file_name} route)
+@app.get("/api/country-rules")
+async def get_all_country_rules():
+    """
+    Get all country rules.
+    
+    Returns:
+        dict: List of all country rules
+    """
+    try:
+        try:
+            rules_data = read_json_file(JSON_FILES['countryRules'])
+        except HTTPException as e:
+            logger.warning(f"Country rules file not found or can't be read: {str(e)}")
+            return {"rules": []}
+        except Exception as e:
+            logger.warning(f"Error reading country rules file: {str(e)}, returning empty rules")
+            return {"rules": []}
+        
+        # Ensure rules_data has the expected structure
+        if not isinstance(rules_data, dict):
+            logger.warning("Country rules file has invalid structure, returning empty rules")
+            return {"rules": []}
+        
+        if 'rules' not in rules_data:
+            logger.warning("Country rules file missing 'rules' key, returning empty rules")
+            return {"rules": []}
+        
+        all_rules = rules_data.get('rules', [])
+        logger.info(f"Returning all {len(all_rules)} country rules")
+        return {
+            "rules": all_rules,
+            "count": len(all_rules)
+        }
+    except Exception as e:
+        logger.error(f"Error getting all country rules: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting all country rules: {str(e)}")
+
+@app.get("/api/country-rules/{country}")
+async def get_rules_for_country(country: str):
+    """
+    Get all rules for a specific country.
+    
+    Args:
+        country (str): The name of the country
+        
+    Returns:
+        dict: List of rules for the country
+    """
+    try:
+        try:
+            rules_data = read_json_file(JSON_FILES['countryRules'])
+        except HTTPException as e:
+            logger.warning(f"Country rules file not found or can't be read: {str(e)}")
+            return {"rules": []}
+        except Exception as e:
+            logger.warning(f"Error reading country rules file: {str(e)}, returning empty rules")
+            return {"rules": []}
+        
+        # Ensure rules_data has the expected structure
+        if not isinstance(rules_data, dict):
+            logger.warning("Country rules file has invalid structure, returning empty rules")
+            return {"rules": []}
+        
+        if 'rules' not in rules_data:
+            logger.warning("Country rules file missing 'rules' key, returning empty rules")
+            return {"rules": []}
+        
+        # Filter rules by country
+        country_rules = [
+            rule for rule in rules_data.get('rules', [])
+            if rule.get('country', '').lower() == country.lower()
+        ]
+        
+        logger.info(f"Found {len(country_rules)} rules for country {country}")
+        return {
+            "rules": country_rules,
+            "count": len(country_rules)
+        }
+    except Exception as e:
+        logger.error(f"Error getting country rules: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting country rules: {str(e)}")
+
+@app.get("/api/country-rules/{country}/count")
+async def get_country_rule_count(country: str):
+    """
+    Get the count of rules for a specific country.
+    
+    Args:
+        country (str): The name of the country
+        
+    Returns:
+        dict: Count of rules for the country
+    """
+    try:
+        try:
+            rules_data = read_json_file(JSON_FILES['countryRules'])
+        except HTTPException as e:
+            logger.warning(f"Country rules file not found or can't be read: {str(e)}")
+            return {"count": 0}
+        except Exception as e:
+            logger.warning(f"Error reading country rules file: {str(e)}, returning count 0")
+            return {"count": 0}
+        
+        if not isinstance(rules_data, dict):
+            logger.warning("Country rules file has invalid structure, returning count 0")
+            return {"count": 0}
+        
+        if 'rules' not in rules_data:
+            logger.warning("Country rules file missing 'rules' key, returning count 0")
+            return {"count": 0}
+        
+        # Filter rules by country and count
+        country_rules = [
+            rule for rule in rules_data.get('rules', [])
+            if rule.get('country', '').lower() == country.lower()
+        ]
+        
+        return {"count": len(country_rules)}
+    except Exception as e:
+        logger.error(f"Error getting country rule count: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting country rule count: {str(e)}")
+
+@app.get("/api/country-rules/{country}/coverage")
+async def get_country_rule_coverage(country: str):
+    """
+    Get rule coverage statistics for a country.
+    
+    Args:
+        country (str): The name of the country
+        
+    Returns:
+        dict: Coverage statistics showing rules per object/column
+    """
+    try:
+        # Get country rules
+        try:
+            rules_data = read_json_file(JSON_FILES['countryRules'])
+        except HTTPException:
+            rules_data = {"rules": []}
+        except Exception as e:
+            logger.warning(f"Error reading country rules file: {str(e)}")
+            rules_data = {"rules": []}
+        
+        if not isinstance(rules_data, dict):
+            rules_data = {"rules": []}
+        
+        country_rules = [
+            rule for rule in rules_data.get('rules', [])
+            if rule.get('country', '').lower() == country.lower()
+        ]
+        
+        # Calculate coverage
+        tagged_objects = set()
+        tagged_columns = set()
+        tagged_functions = set()
+        
+        for rule in country_rules:
+            if rule.get('taggedObjects') and isinstance(rule.get('taggedObjects'), list):
+                tagged_objects.update(rule['taggedObjects'])
+            if rule.get('taggedColumns') and isinstance(rule.get('taggedColumns'), list):
+                tagged_columns.update(rule['taggedColumns'])
+            if rule.get('taggedFunctions') and isinstance(rule.get('taggedFunctions'), list):
+                tagged_functions.update(rule['taggedFunctions'])
+        
+        coverage = {
+            "country": country,
+            "totalRules": len(country_rules),
+            "taggedObjects": list(tagged_objects),
+            "taggedColumns": list(tagged_columns),
+            "taggedFunctions": list(tagged_functions),
+            "objectCoverage": len(tagged_objects),
+            "columnCoverage": len(tagged_columns),
+            "functionCoverage": len(tagged_functions),
+            "rules": country_rules
+        }
+        
+        return coverage
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting country rule coverage: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting country rule coverage: {str(e)}")
+
 @app.get("/api/{file_name}")
 def get_json_file(file_name: str):
-    """Get JSON file content from configured data source."""
+    """Get JSON file content with direct file reading or passthrough mode."""
     start_time = perf_counter()
-    logger.info(f"Request for {file_name} - Using {Config.get_data_source()} mode")
-    result = get_cached_data(file_name)
+    logger.info(f"Request for {file_name} - Using {'passthrough' if PASSTHROUGH_MODE else 'direct'} mode")
+    result = fetch_from_github(file_name) if PASSTHROUGH_MODE else get_cached_data(file_name)
     
     # Ensure clickCount is initialized for all toolkit components
     if file_name == 'toolkit' and isinstance(result, dict) and 'toolkit' in result:
-        for component_type in ['functions', 'containers', 'terraform']:
+        for component_type in ['functions', 'containers', 'infrastructure']:
             if component_type in result['toolkit'] and isinstance(result['toolkit'][component_type], list):
                 for component in result['toolkit'][component_type]:
                     if 'clickCount' not in component or component['clickCount'] is None:
@@ -364,8 +691,8 @@ def get_paginated_json_file(
     page_size: int = Query(10, ge=1, le=100)
 ):
     """Get paginated JSON file content."""
-    logger.info(f"Paginated request for {file_name} - Using {Config.get_data_source()} mode")
-    data = get_cached_data(file_name)
+    logger.info(f"Paginated request for {file_name} - Using {'passthrough' if PASSTHROUGH_MODE else 'direct'} mode")
+    data = get_cached_data(file_name) if not PASSTHROUGH_MODE else fetch_from_github(file_name)
     key = DATA_TYPE_KEYS.get(file_name)
     
     if not key or key not in data:
@@ -386,8 +713,8 @@ def get_paginated_json_file(
 @app.get("/api/count/{file_name}")
 def get_count(file_name: str):
     """Get the count of items in a specific data file."""
-    logger.info(f"Count request for {file_name} - Using {Config.get_data_source()} mode")
-    data = get_cached_data(file_name)
+    logger.info(f"Count request for {file_name} - Using {'passthrough' if PASSTHROUGH_MODE else 'direct'} mode")
+    data = get_cached_data(file_name) if not PASSTHROUGH_MODE else fetch_from_github(file_name)
     key = DATA_TYPE_KEYS.get(file_name)
     
     if not key or key not in data:
@@ -450,7 +777,7 @@ async def get_agreements_by_model(model_short_name: str):
         )
 
 @app.post("/api/models")
-async def create_model(request: CreateModelRequest):
+async def create_model(request: CreateModelRequest, current_user: dict = Depends(require_editor_or_admin)):
     """
     Create a new data model.
     
@@ -508,9 +835,10 @@ async def create_model(request: CreateModelRequest):
         # Add the new model to the array
         models_data['models'].append(new_model)
         
-        # Save the updated data to S3
-        data_service.write_json_file(JSON_FILES['models'], models_data)
-        logger.info(f"Created new model in S3")
+        # Save the updated data to local file
+        local_file_path = JSON_FILES['models']
+        write_json_file(local_file_path, models_data)
+        logger.info(f"Created new model in local file {local_file_path}")
         
         # Update search index
         update_search_index("models", "add", new_model, str(new_id))
@@ -532,7 +860,7 @@ async def create_model(request: CreateModelRequest):
         )
 
 @app.delete("/api/models/{short_name}")
-async def delete_model(short_name: str):
+async def delete_model(short_name: str, current_user: dict = Depends(require_editor_or_admin)):
     """
     Delete a data model by its short name.
     
@@ -549,7 +877,7 @@ async def delete_model(short_name: str):
         logger.info(f"Delete request for model: {short_name}")
         
         # Read current models data
-        models_data = data_service.read_json_file('dataModels.json')
+        models_data = read_json_file(JSON_FILES['models'])
         
         # Find the model to delete
         model_to_delete = None
@@ -567,12 +895,13 @@ async def delete_model(short_name: str):
         # Remove the model from the array
         models_data['models'] = [m for m in models_data['models'] if m['shortName'].lower() != short_name.lower()]
         
-        # Save the updated data to S3
-        data_service.write_json_file(JSON_FILES['models'], models_data)
-        logger.info(f"Model deleted from S3")
+        # Save the updated data to local file
+        local_file_path = JSON_FILES['models']
+        write_json_file(local_file_path, models_data)
+        logger.info(f"Model deleted from local file {local_file_path}")
         
-        # Trigger search reindex for models
-        trigger_reindex('dataModels.json')
+        # Update search index
+        update_search_index("models", "delete", item_id=short_name)
         
         logger.info(f"Model {short_name} deleted successfully")
         
@@ -607,7 +936,7 @@ async def track_model_click(short_name: str):
         logger.info(f"Click tracking request for model: {short_name}")
         
         # Read current models data
-        models_data = data_service.read_json_file(JSON_FILES['models'])
+        models_data = read_json_file(JSON_FILES['models'])
         
         # Find the model to update
         model_index = None
@@ -636,8 +965,9 @@ async def track_model_click(short_name: str):
         # Update the model in the array
         models_data['models'][model_index] = model
         
-        # Save the updated data to S3
-        data_service.write_json_file(JSON_FILES['models'], models_data)
+        # Save the updated data to local file
+        local_file_path = JSON_FILES['models']
+        write_json_file(local_file_path, models_data)
         logger.info(f"Updated click count for model {short_name} to {model['meta']['clickCount']}")
         
         return {
@@ -656,7 +986,7 @@ async def track_model_click(short_name: str):
         )
 
 @app.put("/api/models/{short_name}")
-async def update_model(short_name: str, request: UpdateModelRequest):
+async def update_model(short_name: str, request: UpdateModelRequest, current_user: dict = Depends(require_editor_or_admin)):
     """
     Update a data model by its short name.
     
@@ -674,7 +1004,7 @@ async def update_model(short_name: str, request: UpdateModelRequest):
         logger.info(f"Update request for model: {short_name}")
         
         # Read current models data
-        models_data = data_service.read_json_file('dataModels.json')
+        models_data = read_json_file(JSON_FILES['models'])
         
         # Find the model to update
         model_index = None
@@ -720,7 +1050,7 @@ async def update_model(short_name: str, request: UpdateModelRequest):
             # Update agreements that reference the old shortName (only if requested)
             if request.updateAssociatedLinks:
                 try:
-                    agreements_data = data_service.read_json_file('dataAgreements.json')
+                    agreements_data = read_json_file(JSON_FILES['dataAgreements'])
                     agreements_updated = False
                     
                     for agreement in agreements_data['agreements']:
@@ -730,10 +1060,8 @@ async def update_model(short_name: str, request: UpdateModelRequest):
                             logger.info(f"Updated agreement {agreement['id']} modelShortName from '{old_short_name}' to '{new_short_name}'")
                     
                     if agreements_updated:
-                        data_service.write_json_file('dataAgreements.json', agreements_data)
+                        write_json_file(JSON_FILES['dataAgreements'], agreements_data)
                         logger.info(f"Updated agreements file with new modelShortName references")
-                        # Trigger reindex for agreements
-                        trigger_reindex('dataAgreements.json')
                     
                 except Exception as e:
                     logger.error(f"Error updating agreements: {str(e)}")
@@ -762,12 +1090,13 @@ async def update_model(short_name: str, request: UpdateModelRequest):
         # Replace the model in the array
         models_data['models'][model_index] = updated_model
         
-        # Save the updated data to S3
-        data_service.write_json_file(JSON_FILES['models'], models_data)
-        logger.info(f"Updated S3 file")
+        # Save the updated data to local file
+        local_file_path = JSON_FILES['models']
+        write_json_file(local_file_path, models_data)
+        logger.info(f"Updated local file {local_file_path}")
         
-        # Trigger search reindex for models
-        trigger_reindex('dataModels.json')
+        # Update search index
+        update_search_index("models", "update", updated_model, short_name)
         
         # No cache to clear - always fresh data
         logger.info("No caching - data will be fresh on next request")
@@ -788,19 +1117,94 @@ async def update_model(short_name: str, request: UpdateModelRequest):
             detail=f"Error updating model: {str(e)}"
         )
 
+def get_paginated_data(data: Dict, key: str, page: int, page_size: int) -> Dict:
+    """Get paginated data from a dictionary."""
+    items = data.get(key, [])
+    start_idx = (page - 1) * page_size
+    end_idx = start_idx + page_size
+    return {
+        "items": items[start_idx:end_idx],
+        "total": len(items),
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (len(items) + page_size - 1) // page_size
+    }
 
-def read_json_file(file_path: str) -> Dict:
-    """Read JSON file using DataService"""
-    data = data_service.read_json_file(file_path)
-    if data is None:
-        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+def update_json_path(data: Dict, path: str, value: Any) -> Dict:
+    """Update a specific path in the JSON data."""
+    # Simple path implementation - could be enhanced with proper JSON path parsing
+    parts = path.split('.')
+    current = data
+    for part in parts[:-1]:
+        if '[' in part:
+            key, idx = part.split('[')
+            idx = int(idx.rstrip(']'))
+            current = current[key][idx]
+        else:
+            current = current[part]
+    
+    last_part = parts[-1]
+    if '[' in last_part:
+        key, idx = last_part.split('[')
+        idx = int(idx.rstrip(']'))
+        current[key][idx] = value
+    else:
+        current[last_part] = value
+    
     return data
 
+def read_json_file(file_path: str) -> Dict:
+    try:
+        # Handle both relative and absolute paths
+        if file_path.startswith('_data/'):
+            data_path = file_path
+        else:
+            data_path = os.path.join('_data', file_path)
+        
+        logger.info(f"Reading JSON file from: {data_path}")
+        with open(data_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.error(f"File not found: {data_path}")
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON file: {data_path}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Invalid JSON in file {file_path}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error reading file {data_path}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error reading file {file_path}: {str(e)}")
+
 def write_json_file(file_path: str, data: Dict):
-    """Write JSON file using DataService"""
-    success = data_service.write_json_file(file_path, data)
-    if not success:
-        raise HTTPException(status_code=500, detail=f"Failed to write file: {file_path}")
+    try:
+        # Handle both relative and absolute paths
+        if file_path.startswith('_data/'):
+            data_path = file_path
+        else:
+            data_path = os.path.join('_data', file_path)
+        
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(data_path), exist_ok=True)
+        
+        logger.info(f"Writing JSON file to: {data_path}")
+        
+        # Write to a temporary file first, then rename (atomic write)
+        temp_path = f"{data_path}.tmp"
+        with open(temp_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        
+        # Atomic rename
+        if os.path.exists(data_path):
+            os.replace(temp_path, data_path)
+        else:
+            os.rename(temp_path, data_path)
+        
+        logger.info(f"Successfully wrote to: {data_path}")
+    except json.JSONEncodeError as e:
+        logger.error(f"JSON encoding error writing file {data_path}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error encoding JSON for file {file_path}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error writing file {data_path}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error writing file {file_path}: {str(e)}")
 
 def update_search_index(data_type: str, action: str, item: Dict[str, Any] = None, item_id: str = None):
     """Update search index after data changes"""
@@ -823,7 +1227,7 @@ def update_search_index(data_type: str, action: str, item: Dict[str, Any] = None
 
 # Agreement Management Endpoints
 @app.post("/api/agreements")
-async def create_agreement(request: Dict[str, Any]):
+async def create_agreement(request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
     """
     Create a new agreement.
     
@@ -849,12 +1253,13 @@ async def create_agreement(request: Dict[str, Any]):
         new_agreement['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         agreements_data['agreements'].append(new_agreement)
-        write_json_file(JSON_FILES['dataAgreements'], agreements_data)
+        local_file_path = JSON_FILES['dataAgreements']
+        write_json_file(local_file_path, agreements_data)
         
         # Update search index
         update_search_index("dataAgreements", "add", new_agreement, new_id)
         
-        logger.info(f"Created new agreement in S3")
+        logger.info(f"Created new agreement in local file {local_file_path}")
         logger.info(f"Agreement {new_id} created successfully")
         
         return {
@@ -867,7 +1272,7 @@ async def create_agreement(request: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"Error creating agreement: {str(e)}")
 
 @app.put("/api/agreements/{agreement_id}")
-async def update_agreement(agreement_id: str, request: Dict[str, Any]):
+async def update_agreement(agreement_id: str, request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
     """
     Update an existing agreement.
     
@@ -907,12 +1312,13 @@ async def update_agreement(agreement_id: str, request: Dict[str, Any]):
         ]
         agreements_data['agreements'].append(updated_agreement)
         
-        write_json_file(JSON_FILES['dataAgreements'], agreements_data)
+        local_file_path = JSON_FILES['dataAgreements']
+        write_json_file(local_file_path, agreements_data)
         
         # Update search index
         update_search_index("dataAgreements", "update", updated_agreement, agreement_id)
         
-        logger.info(f"Agreement updated in S3")
+        logger.info(f"Agreement updated in local file {local_file_path}")
         logger.info(f"Agreement {agreement_id} updated successfully")
         
         return {
@@ -925,7 +1331,7 @@ async def update_agreement(agreement_id: str, request: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"Error updating agreement: {str(e)}")
 
 @app.delete("/api/agreements/{agreement_id}")
-async def delete_agreement(agreement_id: str):
+async def delete_agreement(agreement_id: str, current_user: dict = Depends(require_editor_or_admin)):
     """
     Delete an agreement by its ID.
     
@@ -956,12 +1362,13 @@ async def delete_agreement(agreement_id: str):
             if a['id'].lower() != agreement_id.lower()
         ]
         
-        write_json_file(JSON_FILES['dataAgreements'], agreements_data)
+        local_file_path = JSON_FILES['dataAgreements']
+        write_json_file(local_file_path, agreements_data)
         
         # Update search index
         update_search_index("dataAgreements", "delete", item_id=agreement_id)
         
-        logger.info(f"Agreement deleted from S3")
+        logger.info(f"Agreement deleted from local file {local_file_path}")
         logger.info(f"Agreement {agreement_id} deleted successfully")
         
         return {
@@ -1023,7 +1430,7 @@ def generate_next_agreement_id(agreements_data: Dict) -> str:
 
 # Reference Data Management Endpoints
 @app.post("/api/reference")
-async def create_reference_item(request: Dict[str, Any]):
+async def create_reference_item(request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
     """
     Create a new reference data item.
     
@@ -1049,12 +1456,10 @@ async def create_reference_item(request: Dict[str, Any]):
         new_item['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         reference_data['items'].append(new_item)
-        write_json_file(JSON_FILES['reference'], reference_data)
+        local_file_path = JSON_FILES['reference']
+        write_json_file(local_file_path, reference_data)
         
-        # Update search index
-        update_search_index("reference", "add", new_item, new_id)
-        
-        logger.info(f"Created new reference item in S3")
+        logger.info(f"Created new reference item in local file {local_file_path}")
         logger.info(f"Reference item {new_id} created successfully")
         
         return {
@@ -1067,7 +1472,7 @@ async def create_reference_item(request: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"Error creating reference item: {str(e)}")
 
 @app.put("/api/reference/{item_id}")
-async def update_reference_item(item_id: str, request: Dict[str, Any]):
+async def update_reference_item(item_id: str, request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
     """
     Update an existing reference data item.
     
@@ -1107,12 +1512,10 @@ async def update_reference_item(item_id: str, request: Dict[str, Any]):
         ]
         reference_data['items'].append(updated_item)
         
-        write_json_file(JSON_FILES['reference'], reference_data)
+        local_file_path = JSON_FILES['reference']
+        write_json_file(local_file_path, reference_data)
         
-        # Update search index
-        update_search_index("reference", "update", updated_item, item_id)
-        
-        logger.info(f"Reference item updated in S3")
+        logger.info(f"Reference item updated in local file {local_file_path}")
         logger.info(f"Reference item {item_id} updated successfully")
         
         return {
@@ -1125,7 +1528,7 @@ async def update_reference_item(item_id: str, request: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"Error updating reference item: {str(e)}")
 
 @app.delete("/api/reference/{item_id}")
-async def delete_reference_item(item_id: str):
+async def delete_reference_item(item_id: str, current_user: dict = Depends(require_editor_or_admin)):
     """
     Delete a reference data item by its ID.
     
@@ -1156,12 +1559,10 @@ async def delete_reference_item(item_id: str):
             if i['id'].lower() != item_id.lower()
         ]
         
-        write_json_file(JSON_FILES['reference'], reference_data)
+        local_file_path = JSON_FILES['reference']
+        write_json_file(local_file_path, reference_data)
         
-        # Update search index
-        update_search_index("reference", "delete", item_id=item_id)
-        
-        logger.info(f"Reference item deleted from S3")
+        logger.info(f"Reference item deleted from local file {local_file_path}")
         logger.info(f"Reference item {item_id} deleted successfully")
         
         return {
@@ -1221,9 +1622,10 @@ async def create_glossary_term(request: Dict[str, Any], current_user: dict = Dep
             glossary_data['terms'] = []
         glossary_data['terms'].append(new_term)
         
-        write_json_file(JSON_FILES['glossary'], glossary_data)
+        local_file_path = JSON_FILES['glossary']
+        write_json_file(local_file_path, glossary_data)
         
-        logger.info(f"Created new glossary term in S3")
+        logger.info(f"Created new glossary term in local file {local_file_path}")
         logger.info(f"Glossary term {new_id} created successfully")
         
         return {
@@ -1279,9 +1681,10 @@ async def update_glossary_term(term_id: str, request: Dict[str, Any], current_us
         ]
         glossary_data['terms'].append(updated_term)
         
-        write_json_file(JSON_FILES['glossary'], glossary_data)
+        local_file_path = JSON_FILES['glossary']
+        write_json_file(local_file_path, glossary_data)
         
-        logger.info(f"Glossary term updated in S3")
+        logger.info(f"Glossary term updated in local file {local_file_path}")
         logger.info(f"Glossary term {term_id} updated successfully")
         
         return {
@@ -1327,9 +1730,10 @@ async def delete_glossary_term(term_id: str, current_user: dict = Depends(requir
             if t.get('id', '').lower() != term_id.lower()
         ]
         
-        write_json_file(JSON_FILES['glossary'], glossary_data)
+        local_file_path = JSON_FILES['glossary']
+        write_json_file(local_file_path, glossary_data)
         
-        logger.info(f"Glossary term deleted from S3")
+        logger.info(f"Glossary term deleted from local file {local_file_path}")
         logger.info(f"Glossary term {term_id} deleted successfully")
         
         return {
@@ -1345,7 +1749,7 @@ async def delete_glossary_term(term_id: str, current_user: dict = Depends(requir
 
 # Applications CRUD endpoints
 @app.post("/api/applications")
-async def create_application(application: Dict[str, Any]):
+async def create_application(application: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
     """
     Create a new application.
     
@@ -1362,8 +1766,9 @@ async def create_application(application: Dict[str, Any]):
         logger.info(f"Create request for application: {application.get('name', 'Unknown')}")
         applications_data = read_json_file(JSON_FILES['applications'])
         
-        # Generate UUID for new application
-        new_id = str(uuid.uuid4())
+        # Generate new ID
+        max_id = max([app['id'] for app in applications_data['applications']]) if applications_data['applications'] else 0
+        new_id = max_id + 1
         
         # Create new application with ID
         new_application = {
@@ -1371,23 +1776,15 @@ async def create_application(application: Dict[str, Any]):
             "name": application.get('name', ''),
             "description": application.get('description', ''),
             "domains": application.get('domains', []),
-            "link": application.get('link', ''),
-            "email": application.get('email', ''),
-            "lastUpdated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            "link": application.get('link', '')
         }
-        
-        # Add roles field only if provided
-        if 'roles' in application:
-            new_application['roles'] = application['roles']
         
         applications_data['applications'].append(new_application)
         
-        write_json_file(JSON_FILES['applications'], applications_data)
+        local_file_path = JSON_FILES['applications']
+        write_json_file(local_file_path, applications_data)
         
-        # Update search index
-        update_search_index("applications", "add", new_application, new_id)
-        
-        logger.info(f"Application created in S3")
+        logger.info(f"Application created in local file {local_file_path}")
         logger.info(f"Application {new_id} created successfully")
         
         return {
@@ -1400,7 +1797,7 @@ async def create_application(application: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"Error creating application: {str(e)}")
 
 @app.put("/api/applications/{application_id}")
-async def update_application(application_id: int, application: Dict[str, Any]):
+async def update_application(application_id: int, application: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
     """
     Update an existing application by its ID.
     
@@ -1429,28 +1826,18 @@ async def update_application(application_id: int, application: Dict[str, Any]):
             raise HTTPException(status_code=404, detail=f"Application with ID {application_id} not found")
         
         # Update the application
-        updated_application = {
+        applications_data['applications'][app_to_update] = {
             "id": application_id,
             "name": application.get('name', ''),
             "description": application.get('description', ''),
             "domains": application.get('domains', []),
-            "link": application.get('link', ''),
-            "email": application.get('email', ''),
-            "lastUpdated": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            "link": application.get('link', '')
         }
         
-        # Add roles field only if provided
-        if 'roles' in application:
-            updated_application['roles'] = application['roles']
+        local_file_path = JSON_FILES['applications']
+        write_json_file(local_file_path, applications_data)
         
-        applications_data['applications'][app_to_update] = updated_application
-        
-        write_json_file(JSON_FILES['applications'], applications_data)
-        
-        # Update search index
-        update_search_index("applications", "update", updated_application, str(application_id))
-        
-        logger.info(f"Application updated in S3")
+        logger.info(f"Application updated in local file {local_file_path}")
         logger.info(f"Application {application_id} updated successfully")
         
         return {
@@ -1463,7 +1850,7 @@ async def update_application(application_id: int, application: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"Error updating application: {str(e)}")
 
 @app.delete("/api/applications/{application_id}")
-async def delete_application(application_id: int):
+async def delete_application(application_id: int, current_user: dict = Depends(require_editor_or_admin)):
     """
     Delete an application by its ID.
     
@@ -1494,12 +1881,10 @@ async def delete_application(application_id: int):
             if app['id'] != application_id
         ]
         
-        write_json_file(JSON_FILES['applications'], applications_data)
+        local_file_path = JSON_FILES['applications']
+        write_json_file(local_file_path, applications_data)
         
-        # Update search index
-        update_search_index("applications", "delete", item_id=str(application_id))
-        
-        logger.info(f"Application deleted from S3")
+        logger.info(f"Application deleted from local file {local_file_path}")
         logger.info(f"Application {application_id} deleted successfully")
         
         return {
@@ -1513,7 +1898,7 @@ async def delete_application(application_id: int):
 
 # Toolkit CRUD endpoints
 @app.post("/api/toolkit")
-async def create_toolkit_component(component: Dict[str, Any]):
+async def create_toolkit_component(component: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
     """
     Create a new toolkit component.
     
@@ -1528,15 +1913,54 @@ async def create_toolkit_component(component: Dict[str, Any]):
     """
     try:
         logger.info(f"Create request for toolkit component: {component.get('name', 'Unknown')}")
+        logger.debug(f"Component data received: {json.dumps(component, default=str)[:500]}")  # Log first 500 chars
+        
         toolkit_data = read_json_file(JSON_FILES['toolkit'])
+        
+        # Ensure toolkit structure exists
+        if 'toolkit' not in toolkit_data:
+            toolkit_data['toolkit'] = {}
         
         # Determine component type and generate ID
         component_type = component.get('type', 'functions')
         if component_type not in ['functions', 'containers', 'terraform']:
             raise HTTPException(status_code=400, detail="Invalid component type")
         
-        # Generate UUID for all component types
-        new_id = str(uuid.uuid4())
+        # Initialize component type array if it doesn't exist
+        if component_type not in toolkit_data['toolkit']:
+            toolkit_data['toolkit'][component_type] = []
+        
+        # For functions, generate a UUID as the ID
+        if component_type == 'functions':
+            function_name = component.get('name', '')
+            if not function_name:
+                raise HTTPException(status_code=400, detail="Function name is required")
+            
+            # Check if function name already exists (for display purposes, not ID)
+            existing_names = [item.get('name', '') for item in toolkit_data['toolkit'][component_type] if item.get('name')]
+            if function_name in existing_names:
+                raise HTTPException(status_code=400, detail=f"Function with name '{function_name}' already exists")
+            
+            # Generate UUID for function ID
+            new_id = str(uuid.uuid4())
+        else:
+            # Generate new ID based on type for other component types
+            existing_ids = [item.get('id', '') for item in toolkit_data['toolkit'][component_type] if item.get('id')]
+            if component_type == 'containers':
+                prefix = 'cont_'
+            else:
+                prefix = 'tf_'
+            
+            max_num = 0
+            for item_id in existing_ids:
+                if item_id and item_id.startswith(prefix):
+                    try:
+                        num = int(item_id.split('_')[1])
+                        max_num = max(max_num, num)
+                    except (ValueError, IndexError):
+                        pass
+            
+            new_id = f"{prefix}{max_num + 1:03d}"
         
         # Create new component with ID
         new_component = {
@@ -1561,9 +1985,13 @@ async def create_toolkit_component(component: Dict[str, Any]):
         
         # Add type-specific fields
         if component_type == 'functions':
-            new_component['language'] = component.get('language', '')
-            new_component['code'] = component.get('code', '')
-            new_component['parameters'] = component.get('parameters', [])
+            new_component['language'] = component.get('language', 'python')
+            # Safely handle code field - ensure it's a string
+            code_value = component.get('code', '')
+            new_component['code'] = str(code_value) if code_value is not None else ''
+            # Safely handle parameters - ensure it's a list
+            params = component.get('parameters', [])
+            new_component['parameters'] = params if isinstance(params, list) else []
         elif component_type == 'containers':
             new_component['dockerfile'] = component.get('dockerfile', '')
             new_component['dockerCompose'] = component.get('dockerCompose', '')
@@ -1575,12 +2003,12 @@ async def create_toolkit_component(component: Dict[str, Any]):
         
         toolkit_data['toolkit'][component_type].append(new_component)
         
-        write_json_file(JSON_FILES['toolkit'], toolkit_data)
+        logger.debug(f"About to write component with ID: {new_id}, name: {new_component.get('name')}")
         
-        # Update search index
-        update_search_index("toolkit", "add", new_component, new_id)
+        local_file_path = JSON_FILES['toolkit']
+        write_json_file(local_file_path, toolkit_data)
         
-        logger.info(f"Toolkit component created in S3")
+        logger.info(f"Toolkit component created in local file {local_file_path}")
         logger.info(f"Component {new_id} created successfully")
         
         return {
@@ -1588,12 +2016,152 @@ async def create_toolkit_component(component: Dict[str, Any]):
             "id": new_id,
             "component": new_component
         }
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error creating toolkit component: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error creating toolkit component: {str(e)}")
+        logger.error(f"Error creating toolkit component: {str(e)}", exc_info=True)
+        error_detail = str(e) if str(e) else f"Unknown error: {type(e).__name__}"
+        raise HTTPException(status_code=500, detail=f"Error creating toolkit component: {error_detail}")
+
+@app.put("/api/toolkit/packages/{package_id}")
+async def update_toolkit_package(
+    package_id: str, 
+    package_data: Dict[str, Any], 
+    current_user: dict = Depends(require_editor_or_admin)
+):
+    """
+    Update or create a toolkit package.
+    
+    Args:
+        package_id: UUID of the package (or 'new' for creating a new package)
+        package_data: Package metadata including description, version, maintainers, etc.
+        
+    Returns:
+        dict: Success message and package info
+    """
+    try:
+        logger.info(f"Update request for toolkit package: {package_id}")
+        logger.info(f"Package data type: {type(package_data)}")
+        logger.info(f"Package data received: {package_data}")
+        
+        # Validate package_data
+        if package_data is None:
+            raise HTTPException(status_code=400, detail="Package data is required")
+        
+        if not isinstance(package_data, dict):
+            raise HTTPException(status_code=400, detail=f"Package data must be a dictionary, got {type(package_data)}")
+        
+        # Read toolkit data
+        try:
+            toolkit_data = read_json_file(JSON_FILES['toolkit'])
+        except Exception as e:
+            logger.error(f"Error reading toolkit file: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error reading toolkit data: {str(e)}")
+        
+        # Ensure toolkit structure exists
+        if 'toolkit' not in toolkit_data:
+            toolkit_data['toolkit'] = {}
+        
+        # Initialize packages array if it doesn't exist
+        if 'packages' not in toolkit_data['toolkit']:
+            toolkit_data['toolkit']['packages'] = []
+        
+        # Find existing package or create new one
+        packages = toolkit_data['toolkit'].get('packages', [])
+        package_index = None
+        is_new_package = (package_id == 'new' or package_id not in [pkg.get('id') for pkg in packages])
+        
+        if not is_new_package:
+            for i, pkg in enumerate(packages):
+                if pkg.get('id') == package_id:
+                    package_index = i
+                    break
+        
+        # Safely extract and validate data
+        try:
+            # Ensure functionIds is a list
+            function_ids = package_data.get('functionIds', [])
+            if function_ids is None:
+                function_ids = []
+            elif not isinstance(function_ids, list):
+                logger.warning(f"functionIds is not a list, converting: {function_ids}")
+                function_ids = list(function_ids) if hasattr(function_ids, '__iter__') else []
+            
+            # Ensure maintainers is a list
+            maintainers = package_data.get('maintainers', [])
+            if maintainers is None:
+                maintainers = []
+            elif not isinstance(maintainers, list):
+                logger.warning(f"maintainers is not a list, converting: {maintainers}")
+                maintainers = list(maintainers) if hasattr(maintainers, '__iter__') else []
+            
+            # Safely get string fields
+            description = str(package_data.get('description', '')) if package_data.get('description') is not None else ''
+            version = str(package_data.get('version', '')) if package_data.get('version') is not None else ''
+            latest_release_date = str(package_data.get('latestReleaseDate', '')) if package_data.get('latestReleaseDate') is not None else ''
+            documentation = str(package_data.get('documentation', '')) if package_data.get('documentation') is not None else ''
+            github_repo = str(package_data.get('githubRepo', '')) if package_data.get('githubRepo') is not None else ''
+            package_name = package_data.get('name', '')
+            if not package_name:
+                raise HTTPException(status_code=400, detail="Package name is required")
+            
+            pip_install = str(package_data.get('pipInstall', f'pip install {package_name}')) if package_data.get('pipInstall') is not None else f'pip install {package_name}'
+            
+            # Generate UUID for new packages
+            if is_new_package:
+                package_uuid = str(uuid.uuid4())
+            else:
+                package_uuid = package_id
+            
+            package_metadata = {
+                "id": package_uuid,
+                "name": package_name,
+                "description": description,
+                "version": version,
+                "latestReleaseDate": latest_release_date,
+                "maintainers": maintainers,
+                "documentation": documentation,
+                "githubRepo": github_repo,
+                "pipInstall": pip_install,
+                "functionIds": function_ids,
+            }
+        except Exception as e:
+            logger.error(f"Error processing package data: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=400, detail=f"Error processing package data: {str(e)}")
+        
+        # Update or create package
+        try:
+            if package_index is not None:
+                toolkit_data['toolkit']['packages'][package_index] = package_metadata
+                logger.info(f"Updated existing package: {package_name} (ID: {package_uuid})")
+            else:
+                toolkit_data['toolkit']['packages'].append(package_metadata)
+                logger.info(f"Created new package: {package_name} (ID: {package_uuid})")
+        except Exception as e:
+            logger.error(f"Error updating package in memory: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error updating package: {str(e)}")
+        
+        # Save the updated toolkit data
+        try:
+            local_file_path = JSON_FILES['toolkit']
+            write_json_file(local_file_path, toolkit_data)
+            logger.info(f"Package {package_name} (ID: {package_uuid}) saved successfully")
+        except Exception as e:
+            logger.error(f"Error writing toolkit file: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error saving toolkit data: {str(e)}")
+        
+        return {
+            "message": "Package saved successfully",
+            "package": package_metadata
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving toolkit package: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error saving toolkit package: {str(e)}")
 
 @app.put("/api/toolkit/{component_type}/{component_id}")
-async def update_toolkit_component(component_type: str, component_id: str, component: Dict[str, Any]):
+async def update_toolkit_component(component_type: str, component_id: str, component: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
     """
     Update an existing toolkit component by its ID.
     
@@ -1664,12 +2232,10 @@ async def update_toolkit_component(component_type: str, component_id: str, compo
         
         toolkit_data['toolkit'][component_type][comp_to_update] = updated_component
         
-        write_json_file(JSON_FILES['toolkit'], toolkit_data)
+        local_file_path = JSON_FILES['toolkit']
+        write_json_file(local_file_path, toolkit_data)
         
-        # Update search index
-        update_search_index("toolkit", "update", updated_component, component_id)
-        
-        logger.info(f"Toolkit component updated in S3")
+        logger.info(f"Toolkit component updated in local file {local_file_path}")
         logger.info(f"Component {component_id} updated successfully")
         
         return {
@@ -1680,304 +2246,6 @@ async def update_toolkit_component(component_type: str, component_id: str, compo
     except Exception as e:
         logger.error(f"Error updating toolkit component: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error updating toolkit component: {str(e)}")
-
-@app.post("/api/toolkit/{component_type}/{component_id}/click")
-async def track_toolkit_component_click(component_type: str, component_id: str):
-    """
-    Track a click on a toolkit component card and increment the click counter.
-    
-    Args:
-        component_type (str): The type of component (functions, containers, terraform)
-        component_id (str): The ID of the component to track
-        
-    Returns:
-        dict: Success message and updated click count
-        
-    Raises:
-        HTTPException: If the component is not found
-    """
-    try:
-        logger.info(f"Click tracking request for toolkit component: {component_type}/{component_id}")
-        
-        if component_type not in ['functions', 'containers', 'terraform']:
-            raise HTTPException(status_code=400, detail="Invalid component type")
-        
-        # Read current toolkit data
-        toolkit_data = read_json_file(JSON_FILES['toolkit'])
-        
-        # Find the component to update
-        component_index = None
-        components = toolkit_data['toolkit'].get(component_type, [])
-        
-        for i, component in enumerate(components):
-            if component['id'] == component_id:
-                component_index = i
-                break
-        
-        if component_index is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Component with ID '{component_id}' not found in {component_type}"
-            )
-        
-        # Get the current component
-        component = components[component_index]
-        
-        # Initialize clickCount if it doesn't exist
-        if 'clickCount' not in component:
-            component['clickCount'] = 0
-        
-        # Increment click count
-        component['clickCount'] = component.get('clickCount', 0) + 1
-        
-        # Update the component in the array
-        toolkit_data['toolkit'][component_type][component_index] = component
-        
-        # Save the updated data to S3
-        write_json_file(JSON_FILES['toolkit'], toolkit_data)
-        logger.info(f"Updated click count for {component_type}/{component_id} to {component['clickCount']}")
-        
-        return {
-            "message": "Click tracked successfully",
-            "componentType": component_type,
-            "componentId": component_id,
-            "clickCount": component['clickCount']
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error tracking toolkit component click: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error tracking click: {str(e)}"
-        )
-
-@app.delete("/api/toolkit/{component_type}/{component_id}")
-async def delete_toolkit_component(component_type: str, component_id: str):
-    """
-    Delete a toolkit component by its ID.
-    
-    Args:
-        component_type (str): The type of component (functions, containers, terraform)
-        component_id (str): The ID of the component to delete
-        
-    Returns:
-        dict: Success message and deleted component info
-        
-    Raises:
-        HTTPException: If the component is not found or deletion fails
-    """
-    try:
-        logger.info(f"Delete request for toolkit component: {component_id}")
-        
-        if component_type not in ['functions', 'containers', 'terraform']:
-            raise HTTPException(status_code=400, detail="Invalid component type")
-        
-        toolkit_data = read_json_file(JSON_FILES['toolkit'])
-        
-        comp_to_delete = None
-        for comp in toolkit_data['toolkit'][component_type]:
-            if comp['id'] == component_id:
-                comp_to_delete = comp
-                break
-        
-        if not comp_to_delete:
-            raise HTTPException(status_code=404, detail=f"Component with ID {component_id} not found")
-        
-        toolkit_data['toolkit'][component_type] = [
-            comp for comp in toolkit_data['toolkit'][component_type] 
-            if comp['id'] != component_id
-        ]
-        
-        local_file_path = JSON_FILES['toolkit']
-        write_json_file(local_file_path, toolkit_data)
-        
-        # Update search index
-        update_search_index("toolkit", "delete", item_id=component_id)
-        
-        logger.info(f"Toolkit component deleted from S3")
-        logger.info(f"Component {component_id} deleted successfully")
-        
-        return {
-            "message": "Toolkit component deleted successfully",
-            "id": component_id,
-            "deleted": True
-        }
-    except Exception as e:
-        logger.error(f"Error deleting toolkit component: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error deleting toolkit component: {str(e)}")
-
-@app.put("/api/toolkit/packages/{package_id}")
-async def update_toolkit_package(
-    package_id: str, 
-    package_data: Dict[str, Any], 
-    current_user: dict = Depends(require_editor_or_admin)
-):
-    """
-    Update or create a toolkit package.
-    
-    Args:
-        package_id: UUID of the package (or 'new' for creating a new package)
-        package_data: Package metadata including description, version, maintainers, etc.
-        
-    Returns:
-        dict: Success message and package info
-    """
-    try:
-        logger.info(f"Update request for toolkit package: {package_id}")
-        
-        if package_data is None:
-            raise HTTPException(status_code=400, detail="Package data is required")
-        
-        if not isinstance(package_data, dict):
-            raise HTTPException(status_code=400, detail=f"Package data must be a dictionary, got {type(package_data)}")
-        
-        toolkit_data = read_json_file(JSON_FILES['toolkit'])
-        
-        if 'toolkit' not in toolkit_data:
-            toolkit_data['toolkit'] = {}
-        
-        if 'packages' not in toolkit_data['toolkit']:
-            toolkit_data['toolkit']['packages'] = []
-        
-        packages = toolkit_data['toolkit'].get('packages', [])
-        package_index = None
-        is_new_package = (package_id == 'new' or package_id not in [pkg.get('id') for pkg in packages])
-        
-        if not is_new_package:
-            for i, pkg in enumerate(packages):
-                if pkg.get('id') == package_id:
-                    package_index = i
-                    break
-        
-        function_ids = package_data.get('functionIds', [])
-        if function_ids is None:
-            function_ids = []
-        elif not isinstance(function_ids, list):
-            function_ids = list(function_ids) if hasattr(function_ids, '__iter__') else []
-        
-        maintainers = package_data.get('maintainers', [])
-        if maintainers is None:
-            maintainers = []
-        elif not isinstance(maintainers, list):
-            maintainers = list(maintainers) if hasattr(maintainers, '__iter__') else []
-        
-        description = str(package_data.get('description', '')) if package_data.get('description') is not None else ''
-        version = str(package_data.get('version', '')) if package_data.get('version') is not None else ''
-        latest_release_date = str(package_data.get('latestReleaseDate', '')) if package_data.get('latestReleaseDate') is not None else ''
-        documentation = str(package_data.get('documentation', '')) if package_data.get('documentation') is not None else ''
-        github_repo = str(package_data.get('githubRepo', '')) if package_data.get('githubRepo') is not None else ''
-        package_name = package_data.get('name', '')
-        if not package_name:
-            raise HTTPException(status_code=400, detail="Package name is required")
-        
-        pip_install = str(package_data.get('pipInstall', f'pip install {package_name}')) if package_data.get('pipInstall') is not None else f'pip install {package_name}'
-        
-        if is_new_package:
-            package_uuid = str(uuid.uuid4())
-        else:
-            package_uuid = package_id
-        
-        package_metadata = {
-            "id": package_uuid,
-            "name": package_name,
-            "description": description,
-            "version": version,
-            "latestReleaseDate": latest_release_date,
-            "maintainers": maintainers,
-            "documentation": documentation,
-            "githubRepo": github_repo,
-            "pipInstall": pip_install,
-            "functionIds": function_ids,
-        }
-        
-        if package_index is not None:
-            toolkit_data['toolkit']['packages'][package_index] = package_metadata
-            logger.info(f"Updated existing package: {package_name} (ID: {package_uuid})")
-        else:
-            toolkit_data['toolkit']['packages'].append(package_metadata)
-            logger.info(f"Created new package: {package_name} (ID: {package_uuid})")
-        
-        write_json_file(JSON_FILES['toolkit'], toolkit_data)
-        logger.info(f"Package {package_name} (ID: {package_uuid}) saved successfully")
-        
-        return {
-            "message": "Package saved successfully",
-            "package": package_metadata
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error saving toolkit package: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error saving toolkit package: {str(e)}")
-
-@app.delete("/api/toolkit/packages/{package_id}")
-async def delete_toolkit_package(
-    package_id: str,
-    current_user: dict = Depends(require_editor_or_admin)
-):
-    """
-    Delete a toolkit package.
-    
-    Args:
-        package_id: UUID of the package to delete
-        
-    Returns:
-        dict: Success message and deleted package info
-    """
-    try:
-        logger.info(f"Delete request for toolkit package: {package_id}")
-        
-        toolkit_data = read_json_file(JSON_FILES['toolkit'])
-        
-        if 'toolkit' not in toolkit_data:
-            toolkit_data['toolkit'] = {}
-        
-        if 'packages' not in toolkit_data['toolkit']:
-            toolkit_data['toolkit']['packages'] = []
-        
-        packages = toolkit_data['toolkit'].get('packages', [])
-        package_to_delete = None
-        actual_id = None
-        actual_name = None
-        
-        for pkg in packages:
-            if pkg.get('id') == package_id:
-                package_to_delete = pkg
-                actual_id = pkg.get('id')
-                actual_name = pkg.get('name')
-                break
-            if pkg.get('name') == package_id:
-                package_to_delete = pkg
-                actual_id = pkg.get('id')
-                actual_name = pkg.get('name')
-                break
-        
-        if not package_to_delete:
-            logger.warning(f"Package not found. Searched for ID/name: '{package_id}'. Available packages: {[p.get('name') for p in packages]}")
-            raise HTTPException(status_code=404, detail=f"Package with ID/name '{package_id}' not found in packages array")
-        
-        toolkit_data['toolkit']['packages'] = [
-            pkg for pkg in packages 
-            if not (actual_id and pkg.get('id') == actual_id) and not (actual_name and pkg.get('name') == actual_name and not pkg.get('id'))
-        ]
-        
-        write_json_file(JSON_FILES['toolkit'], toolkit_data)
-        
-        logger.info(f"Package {package_to_delete.get('name', 'Unknown')} (ID: {package_id}) deleted successfully")
-        
-        return {
-            "message": "Package deleted successfully",
-            "id": package_id,
-            "name": package_to_delete.get('name', 'Unknown'),
-            "deleted": True
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting toolkit package: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error deleting toolkit package: {str(e)}")
 
 @app.post("/api/toolkit/import-from-library")
 async def import_functions_from_library(
@@ -2024,6 +2292,140 @@ async def import_functions_from_library(
             detail=f"Error importing from library: {str(e)}"
         )
 
+@app.delete("/api/toolkit/packages/{package_id}")
+async def delete_toolkit_package(
+    package_id: str,
+    current_user: dict = Depends(require_editor_or_admin)
+):
+    """
+    Delete a toolkit package.
+    
+    Args:
+        package_id: UUID of the package to delete
+        
+    Returns:
+        dict: Success message and deleted package info
+        
+    Raises:
+        HTTPException: If the package is not found or deletion fails
+    """
+    try:
+        logger.info(f"Delete request for toolkit package: {package_id}")
+        
+        # Read toolkit data
+        toolkit_data = read_json_file(JSON_FILES['toolkit'])
+        
+        # Ensure toolkit structure exists
+        if 'toolkit' not in toolkit_data:
+            toolkit_data['toolkit'] = {}
+        
+        # Initialize packages array if it doesn't exist
+        if 'packages' not in toolkit_data['toolkit']:
+            toolkit_data['toolkit']['packages'] = []
+        
+        # Find the package to delete by ID (with fallback to name for backward compatibility)
+        packages = toolkit_data['toolkit'].get('packages', [])
+        package_to_delete = None
+        actual_id = None
+        actual_name = None
+        
+        for pkg in packages:
+            # Check by ID first
+            if pkg.get('id') == package_id:
+                package_to_delete = pkg
+                actual_id = pkg.get('id')
+                actual_name = pkg.get('name')
+                break
+            # Fallback: check by name for backward compatibility
+            if pkg.get('name') == package_id:
+                package_to_delete = pkg
+                actual_id = pkg.get('id')
+                actual_name = pkg.get('name')
+                break
+        
+        if not package_to_delete:
+            # Check if package_id looks like a UUID (has dashes and is 36 chars) or is a name
+            # If it's a name and no package found, it might not exist in packages array
+            # Log more details for debugging
+            logger.warning(f"Package not found. Searched for ID/name: '{package_id}'. Available packages: {[p.get('name') for p in packages]}")
+            raise HTTPException(status_code=404, detail=f"Package with ID/name '{package_id}' not found in packages array")
+        
+        # Remove the package - use the actual ID or name from the found package
+        toolkit_data['toolkit']['packages'] = [
+            pkg for pkg in packages 
+            if not (actual_id and pkg.get('id') == actual_id) and not (actual_name and pkg.get('name') == actual_name and not pkg.get('id'))
+        ]
+        
+        # Save the updated toolkit data
+        local_file_path = JSON_FILES['toolkit']
+        write_json_file(local_file_path, toolkit_data)
+        
+        logger.info(f"Package {package_to_delete.get('name', 'Unknown')} (ID: {package_id}) deleted successfully")
+        
+        return {
+            "message": "Package deleted successfully",
+            "id": package_id,
+            "name": package_to_delete.get('name', 'Unknown'),
+            "deleted": True
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting toolkit package: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error deleting toolkit package: {str(e)}")
+
+@app.delete("/api/toolkit/{component_type}/{component_id}")
+async def delete_toolkit_component(component_type: str, component_id: str, current_user: dict = Depends(require_editor_or_admin)):
+    """
+    Delete a toolkit component by its ID.
+    
+    Args:
+        component_type (str): The type of component (functions, containers, terraform)
+        component_id (str): The ID of the component to delete
+        
+    Returns:
+        dict: Success message and deleted component info
+        
+    Raises:
+        HTTPException: If the component is not found or deletion fails
+    """
+    try:
+        logger.info(f"Delete request for toolkit component: {component_id}")
+        
+        if component_type not in ['functions', 'containers', 'terraform']:
+            raise HTTPException(status_code=400, detail="Invalid component type")
+        
+        toolkit_data = read_json_file(JSON_FILES['toolkit'])
+        
+        comp_to_delete = None
+        for comp in toolkit_data['toolkit'][component_type]:
+            if comp['id'] == component_id:
+                comp_to_delete = comp
+                break
+        
+        if not comp_to_delete:
+            raise HTTPException(status_code=404, detail=f"Component with ID {component_id} not found")
+        
+        toolkit_data['toolkit'][component_type] = [
+            comp for comp in toolkit_data['toolkit'][component_type] 
+            if comp['id'] != component_id
+        ]
+        
+        local_file_path = JSON_FILES['toolkit']
+        write_json_file(local_file_path, toolkit_data)
+        
+        logger.info(f"Toolkit component deleted from local file {local_file_path}")
+        logger.info(f"Component {component_id} deleted successfully")
+        
+        return {
+            "message": "Toolkit component deleted successfully",
+            "id": component_id,
+            "deleted": True
+        }
+    except Exception as e:
+        logger.error(f"Error deleting toolkit component: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting toolkit component: {str(e)}")
+
 @app.get("/api/policies")
 def get_policies():
     """Get all data policies."""
@@ -2035,16 +2437,16 @@ def get_policies():
         raise HTTPException(status_code=500, detail=f"Error reading policies: {str(e)}")
 
 @app.post("/api/policies")
-def create_policy(policy: Dict[str, Any]):
+def create_policy(policy: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
     """Create a new data policy."""
     try:
         logger.info(f"Create request for new policy: {policy.get('name', 'Unknown')}")
         
         policies_data = read_json_file(JSON_FILES['policies'])
         
-        # Generate UUID for new policy if not provided
+        # Generate new ID if not provided
         if not policy.get('id'):
-            policy['id'] = str(uuid.uuid4())
+            policy['id'] = f"{policy.get('type', 'policy')}_{policy.get('name', 'unknown').lower().replace(' ', '_')}_{int(time.time())}"
         
         # Add timestamp
         policy['lastUpdated'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -2053,10 +2455,8 @@ def create_policy(policy: Dict[str, Any]):
         policies_data['policies'].append(policy)
         
         # Write to file
-        write_json_file(JSON_FILES['policies'], policies_data)
-        
-        # Update search index
-        update_search_index("policies", "add", policy, policy['id'])
+        local_file_path = JSON_FILES['policies']
+        write_json_file(local_file_path, policies_data)
         
         logger.info(f"Policy created successfully with ID: {policy['id']}")
         
@@ -2070,7 +2470,7 @@ def create_policy(policy: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"Error creating policy: {str(e)}")
 
 @app.put("/api/policies/{policy_id}")
-def update_policy(policy_id: str, policy: Dict[str, Any]):
+def update_policy(policy_id: str, policy: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
     """Update an existing data policy."""
     try:
         logger.info(f"Update request for policy: {policy_id}")
@@ -2094,10 +2494,8 @@ def update_policy(policy_id: str, policy: Dict[str, Any]):
         policies_data['policies'][existing_policy] = policy
         
         # Write to file
-        write_json_file(JSON_FILES['policies'], policies_data)
-        
-        # Update search index
-        update_search_index("policies", "update", policy, policy_id)
+        local_file_path = JSON_FILES['policies']
+        write_json_file(local_file_path, policies_data)
         
         logger.info(f"Policy {policy_id} updated successfully")
         
@@ -2113,7 +2511,7 @@ def update_policy(policy_id: str, policy: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"Error updating policy: {str(e)}")
 
 @app.delete("/api/policies/{policy_id}")
-def delete_policy(policy_id: str):
+def delete_policy(policy_id: str, current_user: dict = Depends(require_editor_or_admin)):
     """Delete a data policy."""
     try:
         logger.info(f"Delete request for policy: {policy_id}")
@@ -2131,10 +2529,8 @@ def delete_policy(policy_id: str):
             raise HTTPException(status_code=404, detail=f"Policy with ID {policy_id} not found")
         
         # Write to file
-        write_json_file(JSON_FILES['policies'], policies_data)
-        
-        # Update search index
-        update_search_index("policies", "delete", item_id=policy_id)
+        local_file_path = JSON_FILES['policies']
+        write_json_file(local_file_path, policies_data)
         
         logger.info(f"Policy {policy_id} deleted successfully")
         
@@ -2155,29 +2551,8 @@ def get_cache_status():
     """Get the current status of the cache (disabled)."""
     return {
         "status": "Caching disabled",
-        "message": "All data is read fresh from S3 on each request",
-        "data_source": Config.get_data_source(),
-        "s3_mode": Config.S3_MODE,
-        "s3_bucket": Config.S3_BUCKET_NAME
-    }
-
-@app.get("/api/debug/s3")
-def get_s3_status():
-    """Get S3 connection status and configuration."""
-    if not Config.S3_MODE:
-        return {
-            "s3_mode": False,
-            "message": "S3 mode is not enabled"
-        }
-    
-    s3_available = data_service.s3_service.is_available() if data_service.s3_service else False
-    
-    return {
-        "s3_mode": True,
-        "s3_available": s3_available,
-        "bucket_name": Config.S3_BUCKET_NAME,
-        "aws_region": Config.AWS_REGION,
-        "message": "S3 is available" if s3_available else "S3 is not available - check credentials"
+        "message": "All data is read fresh from files on each request",
+        "test_mode": TEST_MODE
     }
 
 @app.get("/api/debug/performance")
@@ -2218,45 +2593,6 @@ def get_model_relationships():
     except Exception as e:
         logger.error(f"Error in model relationships debug: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/admin/reindex")
-async def manual_reindex(file_name: str = None, current_user: dict = Depends(require_admin)):
-    """
-    Manually trigger search index reindexing.
-    
-    Args:
-        file_name (str, optional): Specific file to reindex. If not provided, reindexes all files.
-        
-    Returns:
-        dict: Reindex status and statistics
-    """
-    try:
-        logger.info(f"Manual reindex triggered by {current_user.get('username', 'unknown')} for file: {file_name or 'all'}")
-        
-        # Trigger reindex
-        success = trigger_reindex(file_name)
-        
-        if success:
-            stats = search_service.get_stats()
-            return {
-                "message": "Reindex completed successfully",
-                "success": True,
-                "file_name": file_name,
-                "stats": stats
-            }
-        else:
-            return {
-                "message": "Reindex failed",
-                "success": False,
-                "file_name": file_name
-            }
-            
-    except Exception as e:
-        logger.error(f"Manual reindex error: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Reindex failed: {str(e)}"
-        )
 
 # Statistics endpoints
 @app.post("/api/statistics/page-view")
@@ -2301,6 +2637,7 @@ async def track_page_view(page: str = Query(..., description="Page path/name to 
         
         stats_data['pageViews'][page]['daily'][today] += 1
         stats_data['pageViews'][page]['total'] += 1
+        # Don't increment totalViews here - it's tracked separately as site visits
         stats_data['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         
         # Save updated statistics
@@ -2430,12 +2767,15 @@ async def get_rules_for_model(model_short_name: str):
         try:
             rules_data = read_json_file(JSON_FILES['rules'])
         except HTTPException as e:
+            # File doesn't exist or can't be read, return empty structure
             logger.warning(f"Rules file not found or can't be read: {str(e)}")
             return {"rules": []}
         except Exception as e:
+            # Other errors reading file
             logger.warning(f"Error reading rules file: {str(e)}, returning empty rules")
             return {"rules": []}
         
+        # Ensure rules_data has the expected structure
         if not isinstance(rules_data, dict):
             logger.warning("Rules file has invalid structure, returning empty rules")
             return {"rules": []}
@@ -2444,6 +2784,7 @@ async def get_rules_for_model(model_short_name: str):
             logger.warning("Rules file missing 'rules' key, returning empty rules")
             return {"rules": []}
         
+        # Filter rules by model
         model_rules = [
             rule for rule in rules_data.get('rules', [])
             if rule.get('modelShortName', '').lower() == model_short_name.lower()
@@ -2457,292 +2798,6 @@ async def get_rules_for_model(model_short_name: str):
     except Exception as e:
         logger.error(f"Error getting rules: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error getting rules: {str(e)}")
-
-@app.get("/api/rules/{model_short_name}/count")
-async def get_rule_count(model_short_name: str):
-    """
-    Get the count of rules for a specific model.
-    
-    Args:
-        model_short_name (str): The short name of the model
-        
-    Returns:
-        dict: Count of rules for the model
-    """
-    try:
-        try:
-            rules_data = read_json_file(JSON_FILES['rules'])
-        except HTTPException as e:
-            logger.warning(f"Rules file not found or can't be read: {str(e)}")
-            return {"count": 0}
-        except Exception as e:
-            logger.warning(f"Error reading rules file: {str(e)}, returning count 0")
-            return {"count": 0}
-        
-        if not isinstance(rules_data, dict):
-            logger.warning("Rules file has invalid structure, returning count 0")
-            return {"count": 0}
-        
-        if 'rules' not in rules_data:
-            logger.warning("Rules file missing 'rules' key, returning count 0")
-            return {"count": 0}
-        
-        model_rules = [
-            rule for rule in rules_data.get('rules', [])
-            if rule.get('modelShortName', '').lower() == model_short_name.lower()
-        ]
-        
-        return {"count": len(model_rules)}
-    except Exception as e:
-        logger.error(f"Error getting rule count: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error getting rule count: {str(e)}")
-
-@app.get("/api/rules/{model_short_name}/coverage")
-async def get_rule_coverage(model_short_name: str):
-    """
-    Get rule coverage statistics for a model.
-    
-    Args:
-        model_short_name (str): The short name of the model
-        
-    Returns:
-        dict: Coverage statistics showing rules per object/column
-    """
-    try:
-        try:
-            models_data = read_json_file(JSON_FILES['models'])
-            model = next(
-                (m for m in models_data.get('models', []) if m.get('shortName', '').lower() == model_short_name.lower()),
-                None
-            )
-        except Exception as e:
-            logger.warning(f"Error reading models file: {str(e)}")
-            model = None
-        
-        if not model:
-            logger.warning(f"Model with short name '{model_short_name}' not found")
-        
-        try:
-            rules_data = read_json_file(JSON_FILES['rules'])
-        except HTTPException:
-            rules_data = {"rules": []}
-        except Exception as e:
-            logger.warning(f"Error reading rules file: {str(e)}")
-            rules_data = {"rules": []}
-        
-        if not isinstance(rules_data, dict):
-            rules_data = {"rules": []}
-        
-        model_rules = [
-            rule for rule in rules_data.get('rules', [])
-            if rule.get('modelShortName', '').lower() == model_short_name.lower()
-        ]
-        
-        tagged_objects = set()
-        tagged_columns = set()
-        tagged_functions = set()
-        
-        for rule in model_rules:
-            if rule.get('taggedObjects') and isinstance(rule.get('taggedObjects'), list):
-                tagged_objects.update(rule['taggedObjects'])
-            if rule.get('taggedColumns') and isinstance(rule.get('taggedColumns'), list):
-                tagged_columns.update(rule['taggedColumns'])
-            if rule.get('taggedFunctions') and isinstance(rule.get('taggedFunctions'), list):
-                tagged_functions.update(rule['taggedFunctions'])
-        
-        coverage = {
-            "modelShortName": model_short_name,
-            "totalRules": len(model_rules),
-            "taggedObjects": list(tagged_objects),
-            "taggedColumns": list(tagged_columns),
-            "taggedFunctions": list(tagged_functions),
-            "objectCoverage": len(tagged_objects),
-            "columnCoverage": len(tagged_columns),
-            "functionCoverage": len(tagged_functions),
-            "rules": model_rules
-        }
-        
-        return coverage
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting rule coverage: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error getting rule coverage: {str(e)}")
-
-@app.post("/api/rules")
-async def create_rule(request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
-    """
-    Create a new rule (model rule).
-    
-    Args:
-        request (dict): The new rule data
-        
-    Returns:
-        dict: Success message and created rule info
-    """
-    try:
-        logger.info(f"Create request for new model rule")
-        
-        try:
-            rules_data = read_json_file(JSON_FILES['rules'])
-        except HTTPException:
-            rules_data = {"rules": []}
-        
-        new_id = str(uuid.uuid4())
-        
-        new_rule = {k: v for k, v in request.items() if k not in ['newObjectInput', 'newColumnInput', 'ruleTypeIdentifier']}
-        new_rule['id'] = new_id
-        new_rule['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        new_rule['createdBy'] = current_user.get('username', 'unknown')
-        
-        rules_data['rules'].append(new_rule)
-        write_json_file(JSON_FILES['rules'], rules_data)
-        
-        logger.info(f"Created new rule in S3")
-        logger.info(f"Rule {new_id} created successfully")
-        
-        return {
-            "message": "Rule created successfully",
-            "id": new_id,
-            "created": True
-        }
-    except Exception as e:
-        logger.error(f"Error creating rule: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error creating rule: {str(e)}")
-
-@app.put("/api/rules/{rule_id}")
-async def update_rule(rule_id: str, request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
-    """
-    Update an existing model rule.
-    
-    Args:
-        rule_id (str): The ID of the rule to update
-        request (dict): The updated rule data
-        
-    Returns:
-        dict: Success message and updated rule info
-    """
-    try:
-        logger.info(f"Update request for model rule: {rule_id}")
-        
-        rules_data = read_json_file(JSON_FILES['rules'])
-        
-        rule_to_update = None
-        for i, rule in enumerate(rules_data.get('rules', [])):
-            if rule.get('id', '').lower() == rule_id.lower():
-                rule_to_update = i
-                break
-        
-        if rule_to_update is None:
-            raise HTTPException(status_code=404, detail=f"Rule with ID '{rule_id}' not found")
-        
-        updated_rule = rules_data['rules'][rule_to_update].copy()
-        cleaned_request = {k: v for k, v in request.items() if k not in ['newObjectInput', 'newColumnInput', 'ruleTypeIdentifier']}
-        updated_rule.update(cleaned_request)
-        updated_rule['id'] = rule_id
-        updated_rule['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        updated_rule['updatedBy'] = current_user.get('username', 'unknown')
-        
-        rules_data['rules'][rule_to_update] = updated_rule
-        
-        write_json_file(JSON_FILES['rules'], rules_data)
-        
-        logger.info(f"Rule updated in S3")
-        logger.info(f"Rule {rule_id} updated successfully")
-        
-        return {
-            "message": "Rule updated successfully",
-            "id": rule_id,
-            "updated": True
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating rule: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error updating rule: {str(e)}")
-
-@app.delete("/api/rules/{rule_id}")
-async def delete_rule(rule_id: str, current_user: dict = Depends(require_editor_or_admin)):
-    """
-    Delete a model rule by its ID.
-    
-    Args:
-        rule_id (str): The ID of the rule to delete
-        
-    Returns:
-        dict: Success message and deleted rule info
-    """
-    try:
-        logger.info(f"Delete request for model rule: {rule_id}")
-        
-        rules_data = read_json_file(JSON_FILES['rules'])
-        
-        rule_to_delete = None
-        for rule in rules_data.get('rules', []):
-            if rule.get('id', '').lower() == rule_id.lower():
-                rule_to_delete = rule
-                break
-        
-        if not rule_to_delete:
-            raise HTTPException(status_code=404, detail=f"Rule with ID '{rule_id}' not found")
-        
-        rules_data['rules'] = [
-            r for r in rules_data.get('rules', [])
-            if r.get('id', '').lower() != rule_id.lower()
-        ]
-        
-        write_json_file(JSON_FILES['rules'], rules_data)
-        
-        logger.info(f"Rule deleted from S3")
-        logger.info(f"Rule {rule_id} deleted successfully")
-        
-        return {
-            "message": "Rule deleted successfully",
-            "id": rule_id,
-            "deleted": True
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting rule: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error deleting rule: {str(e)}")
-
-# Country Rules Management Endpoints
-@app.get("/api/country-rules")
-async def get_all_country_rules():
-    """
-    Get all country rules.
-    
-    Returns:
-        dict: List of all country rules
-    """
-    try:
-        try:
-            rules_data = read_json_file(JSON_FILES['countryRules'])
-        except HTTPException as e:
-            logger.warning(f"Country rules file not found or can't be read: {str(e)}")
-            return {"rules": []}
-        except Exception as e:
-            logger.warning(f"Error reading country rules file: {str(e)}, returning empty rules")
-            return {"rules": []}
-        
-        if not isinstance(rules_data, dict):
-            logger.warning("Country rules file has invalid structure, returning empty rules")
-            return {"rules": []}
-        
-        if 'rules' not in rules_data:
-            logger.warning("Country rules file missing 'rules' key, returning empty rules")
-            return {"rules": []}
-        
-        all_rules = rules_data.get('rules', [])
-        logger.info(f"Returning all {len(all_rules)} country rules")
-        return {
-            "rules": all_rules,
-            "count": len(all_rules)
-        }
-    except Exception as e:
-        logger.error(f"Error getting all country rules: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error getting all country rules: {str(e)}")
 
 @app.get("/api/country-rules/{country}")
 async def get_rules_for_country(country: str):
@@ -2765,6 +2820,7 @@ async def get_rules_for_country(country: str):
             logger.warning(f"Error reading country rules file: {str(e)}, returning empty rules")
             return {"rules": []}
         
+        # Ensure rules_data has the expected structure
         if not isinstance(rules_data, dict):
             logger.warning("Country rules file has invalid structure, returning empty rules")
             return {"rules": []}
@@ -2773,6 +2829,7 @@ async def get_rules_for_country(country: str):
             logger.warning("Country rules file missing 'rules' key, returning empty rules")
             return {"rules": []}
         
+        # Filter rules by country
         country_rules = [
             rule for rule in rules_data.get('rules', [])
             if rule.get('country', '').lower() == country.lower()
@@ -2816,6 +2873,7 @@ async def get_country_rule_count(country: str):
             logger.warning("Country rules file missing 'rules' key, returning count 0")
             return {"count": 0}
         
+        # Filter rules by country and count
         country_rules = [
             rule for rule in rules_data.get('rules', [])
             if rule.get('country', '').lower() == country.lower()
@@ -2838,6 +2896,7 @@ async def get_country_rule_coverage(country: str):
         dict: Coverage statistics showing rules per object/column
     """
     try:
+        # Get country rules
         try:
             rules_data = read_json_file(JSON_FILES['countryRules'])
         except HTTPException:
@@ -2854,6 +2913,7 @@ async def get_country_rule_coverage(country: str):
             if rule.get('country', '').lower() == country.lower()
         ]
         
+        # Calculate coverage
         tagged_objects = set()
         tagged_columns = set()
         tagged_functions = set()
@@ -2885,6 +2945,52 @@ async def get_country_rule_coverage(country: str):
         logger.error(f"Error getting country rule coverage: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error getting country rule coverage: {str(e)}")
 
+@app.post("/api/rules")
+async def create_rule(request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+    """
+    Create a new rule (model rule).
+    
+    Args:
+        request (dict): The new rule data
+        
+    Returns:
+        dict: Success message and created rule info
+    """
+    try:
+        logger.info(f"Create request for new model rule")
+        
+        try:
+            rules_data = read_json_file(JSON_FILES['rules'])
+        except HTTPException:
+            # File doesn't exist, create new structure
+            rules_data = {"rules": []}
+        
+        # Generate UUID as ID
+        new_id = str(uuid.uuid4())
+        
+        # Add lastUpdated timestamp and assign the generated ID
+        # Remove form state fields that shouldn't be saved
+        new_rule = {k: v for k, v in request.items() if k not in ['newObjectInput', 'newColumnInput', 'ruleTypeIdentifier']}
+        new_rule['id'] = new_id
+        new_rule['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        new_rule['createdBy'] = current_user.get('username', 'unknown')
+        
+        rules_data['rules'].append(new_rule)
+        local_file_path = JSON_FILES['rules']
+        write_json_file(local_file_path, rules_data)
+        
+        logger.info(f"Created new rule in local file {local_file_path}")
+        logger.info(f"Rule {new_id} created successfully")
+        
+        return {
+            "message": "Rule created successfully",
+            "id": new_id,
+            "created": True
+        }
+    except Exception as e:
+        logger.error(f"Error creating rule: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating rule: {str(e)}")
+
 @app.post("/api/country-rules")
 async def create_country_rule(request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
     """
@@ -2902,19 +3008,24 @@ async def create_country_rule(request: Dict[str, Any], current_user: dict = Depe
         try:
             rules_data = read_json_file(JSON_FILES['countryRules'])
         except HTTPException:
+            # File doesn't exist, create new structure
             rules_data = {"rules": []}
         
+        # Generate UUID as ID
         new_id = str(uuid.uuid4())
         
+        # Add lastUpdated timestamp and assign the generated ID
+        # Remove form state fields that shouldn't be saved
         new_rule = {k: v for k, v in request.items() if k not in ['newObjectInput', 'newColumnInput', 'ruleTypeIdentifier']}
         new_rule['id'] = new_id
         new_rule['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         new_rule['createdBy'] = current_user.get('username', 'unknown')
         
         rules_data['rules'].append(new_rule)
-        write_json_file(JSON_FILES['countryRules'], rules_data)
+        local_file_path = JSON_FILES['countryRules']
+        write_json_file(local_file_path, rules_data)
         
-        logger.info(f"Created new country rule in S3")
+        logger.info(f"Created new country rule in local file {local_file_path}")
         logger.info(f"Country rule {new_id} created successfully")
         
         return {
@@ -2925,6 +3036,61 @@ async def create_country_rule(request: Dict[str, Any], current_user: dict = Depe
     except Exception as e:
         logger.error(f"Error creating country rule: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating country rule: {str(e)}")
+
+@app.put("/api/rules/{rule_id}")
+async def update_rule(rule_id: str, request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
+    """
+    Update an existing model rule.
+    
+    Args:
+        rule_id (str): The ID of the rule to update
+        request (dict): The updated rule data
+        
+    Returns:
+        dict: Success message and updated rule info
+    """
+    try:
+        logger.info(f"Update request for model rule: {rule_id}")
+        
+        rules_data = read_json_file(JSON_FILES['rules'])
+        
+        # Find the rule to update
+        rule_to_update = None
+        for i, rule in enumerate(rules_data.get('rules', [])):
+            if rule.get('id', '').lower() == rule_id.lower():
+                rule_to_update = i
+                break
+        
+        if rule_to_update is None:
+            raise HTTPException(status_code=404, detail=f"Rule with ID '{rule_id}' not found")
+        
+        # Update the rule
+        updated_rule = rules_data['rules'][rule_to_update].copy()
+        # Remove form state fields that shouldn't be saved
+        cleaned_request = {k: v for k, v in request.items() if k not in ['newObjectInput', 'newColumnInput', 'ruleTypeIdentifier']}
+        updated_rule.update(cleaned_request)
+        updated_rule['id'] = rule_id  # Ensure ID doesn't change
+        updated_rule['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        updated_rule['updatedBy'] = current_user.get('username', 'unknown')
+        
+        rules_data['rules'][rule_to_update] = updated_rule
+        
+        local_file_path = JSON_FILES['rules']
+        write_json_file(local_file_path, rules_data)
+        
+        logger.info(f"Rule updated in local file {local_file_path}")
+        logger.info(f"Rule {rule_id} updated successfully")
+        
+        return {
+            "message": "Rule updated successfully",
+            "id": rule_id,
+            "updated": True
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating rule: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error updating rule: {str(e)}")
 
 @app.put("/api/country-rules/{rule_id}")
 async def update_country_rule(rule_id: str, request: Dict[str, Any], current_user: dict = Depends(require_editor_or_admin)):
@@ -2943,6 +3109,7 @@ async def update_country_rule(rule_id: str, request: Dict[str, Any], current_use
         
         rules_data = read_json_file(JSON_FILES['countryRules'])
         
+        # Find the rule to update
         rule_to_update = None
         for i, rule in enumerate(rules_data.get('rules', [])):
             if rule.get('id', '').lower() == rule_id.lower():
@@ -2952,18 +3119,21 @@ async def update_country_rule(rule_id: str, request: Dict[str, Any], current_use
         if rule_to_update is None:
             raise HTTPException(status_code=404, detail=f"Country rule with ID '{rule_id}' not found")
         
+        # Update the rule
         updated_rule = rules_data['rules'][rule_to_update].copy()
+        # Remove form state fields that shouldn't be saved
         cleaned_request = {k: v for k, v in request.items() if k not in ['newObjectInput', 'newColumnInput', 'ruleTypeIdentifier']}
         updated_rule.update(cleaned_request)
-        updated_rule['id'] = rule_id
+        updated_rule['id'] = rule_id  # Ensure ID doesn't change
         updated_rule['lastUpdated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         updated_rule['updatedBy'] = current_user.get('username', 'unknown')
         
         rules_data['rules'][rule_to_update] = updated_rule
         
-        write_json_file(JSON_FILES['countryRules'], rules_data)
+        local_file_path = JSON_FILES['countryRules']
+        write_json_file(local_file_path, rules_data)
         
-        logger.info(f"Country rule updated in S3")
+        logger.info(f"Country rule updated in local file {local_file_path}")
         logger.info(f"Country rule {rule_id} updated successfully")
         
         return {
@@ -2977,21 +3147,21 @@ async def update_country_rule(rule_id: str, request: Dict[str, Any], current_use
         logger.error(f"Error updating country rule: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error updating country rule: {str(e)}")
 
-@app.delete("/api/country-rules/{rule_id}")
-async def delete_country_rule(rule_id: str, current_user: dict = Depends(require_editor_or_admin)):
+@app.delete("/api/rules/{rule_id}")
+async def delete_rule(rule_id: str, current_user: dict = Depends(require_editor_or_admin)):
     """
-    Delete a country rule by its ID.
+    Delete a model rule by its ID.
     
     Args:
-        rule_id (str): The ID of the country rule to delete
+        rule_id (str): The ID of the rule to delete
         
     Returns:
         dict: Success message and deleted rule info
     """
     try:
-        logger.info(f"Delete request for country rule: {rule_id}")
+        logger.info(f"Delete request for model rule: {rule_id}")
         
-        rules_data = read_json_file(JSON_FILES['countryRules'])
+        rules_data = read_json_file(JSON_FILES['rules'])
         
         rule_to_delete = None
         for rule in rules_data.get('rules', []):
@@ -3000,28 +3170,149 @@ async def delete_country_rule(rule_id: str, current_user: dict = Depends(require
                 break
         
         if not rule_to_delete:
-            raise HTTPException(status_code=404, detail=f"Country rule with ID '{rule_id}' not found")
+            raise HTTPException(status_code=404, detail=f"Rule with ID '{rule_id}' not found")
         
         rules_data['rules'] = [
             r for r in rules_data.get('rules', [])
             if r.get('id', '').lower() != rule_id.lower()
         ]
         
-        write_json_file(JSON_FILES['countryRules'], rules_data)
+        local_file_path = JSON_FILES['rules']
+        write_json_file(local_file_path, rules_data)
         
-        logger.info(f"Country rule deleted from S3")
-        logger.info(f"Country rule {rule_id} deleted successfully")
+        logger.info(f"Rule deleted from local file {local_file_path}")
+        logger.info(f"Rule {rule_id} deleted successfully")
         
         return {
-            "message": "Country rule deleted successfully",
+            "message": "Rule deleted successfully",
             "id": rule_id,
             "deleted": True
         }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error deleting country rule: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error deleting country rule: {str(e)}")
+        logger.error(f"Error deleting rule: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting rule: {str(e)}")
+
+@app.get("/api/rules/{model_short_name}/count")
+async def get_rule_count(model_short_name: str):
+    """
+    Get the count of rules for a specific model.
+    
+    Args:
+        model_short_name (str): The short name of the model
+        
+    Returns:
+        dict: Count of rules for the model
+    """
+    try:
+        try:
+            rules_data = read_json_file(JSON_FILES['rules'])
+        except HTTPException as e:
+            logger.warning(f"Rules file not found or can't be read: {str(e)}")
+            return {"count": 0}
+        except Exception as e:
+            logger.warning(f"Error reading rules file: {str(e)}, returning count 0")
+            return {"count": 0}
+        
+        # Ensure rules_data has the expected structure
+        if not isinstance(rules_data, dict):
+            logger.warning("Rules file has invalid structure, returning count 0")
+            return {"count": 0}
+        
+        if 'rules' not in rules_data:
+            logger.warning("Rules file missing 'rules' key, returning count 0")
+            return {"count": 0}
+        
+        # Filter rules by model and count
+        model_rules = [
+            rule for rule in rules_data.get('rules', [])
+            if rule.get('modelShortName', '').lower() == model_short_name.lower()
+        ]
+        
+        return {"count": len(model_rules)}
+    except Exception as e:
+        logger.error(f"Error getting rule count: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting rule count: {str(e)}")
+
+@app.get("/api/rules/{model_short_name}/coverage")
+async def get_rule_coverage(model_short_name: str):
+    """
+    Get rule coverage statistics for a model.
+    
+    Args:
+        model_short_name (str): The short name of the model
+        
+    Returns:
+        dict: Coverage statistics showing rules per object/column
+    """
+    try:
+        # Get model data to understand structure
+        try:
+            models_data = read_json_file(JSON_FILES['models'])
+            model = next(
+                (m for m in models_data.get('models', []) if m.get('shortName', '').lower() == model_short_name.lower()),
+                None
+            )
+        except Exception as e:
+            logger.warning(f"Error reading models file: {str(e)}")
+            model = None
+        
+        if not model:
+            logger.warning(f"Model with short name '{model_short_name}' not found")
+            # Don't raise error, just return empty coverage
+        
+        # Get rules for this model
+        try:
+            rules_data = read_json_file(JSON_FILES['rules'])
+        except HTTPException:
+            rules_data = {"rules": []}
+        except Exception as e:
+            logger.warning(f"Error reading rules file: {str(e)}")
+            rules_data = {"rules": []}
+        
+        if not isinstance(rules_data, dict):
+            rules_data = {"rules": []}
+        
+        model_rules = [
+            rule for rule in rules_data.get('rules', [])
+            if rule.get('modelShortName', '').lower() == model_short_name.lower()
+        ]
+        
+        # Calculate coverage
+        tagged_objects = set()
+        tagged_columns = set()
+        tagged_functions = set()
+        
+        for rule in model_rules:
+            if rule.get('taggedObjects') and isinstance(rule.get('taggedObjects'), list):
+                tagged_objects.update(rule['taggedObjects'])
+            if rule.get('taggedColumns') and isinstance(rule.get('taggedColumns'), list):
+                tagged_columns.update(rule['taggedColumns'])
+            if rule.get('taggedFunctions') and isinstance(rule.get('taggedFunctions'), list):
+                tagged_functions.update(rule['taggedFunctions'])
+        
+        # Extract objects and columns from model (if available in resources or schema)
+        # For now, we'll return what we have
+        coverage = {
+            "modelShortName": model_short_name,
+            "totalRules": len(model_rules),
+            "taggedObjects": list(tagged_objects),
+            "taggedColumns": list(tagged_columns),
+            "taggedFunctions": list(tagged_functions),
+            "objectCoverage": len(tagged_objects),
+            "columnCoverage": len(tagged_columns),
+            "functionCoverage": len(tagged_functions),
+            "rules": model_rules
+        }
+        
+        return coverage
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting rule coverage: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting rule coverage: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn

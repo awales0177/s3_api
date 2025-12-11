@@ -1,0 +1,260 @@
+{
+  "policies": [
+    {
+      "id": "retention_policy_001",
+      "name": "Customer Data Retention Policy",
+      "type": "retention",
+      "description": "Defines how long customer data should be retained and when it should be archived or deleted",
+      "status": "active",
+      "priority": "high",
+      "category": "data-governance",
+      "owner": [
+        "Data Governance Team"
+      ],
+      "stakeholders": [
+        "Legal",
+        "Compliance",
+        "IT Security"
+      ],
+      "effectiveDate": "2024-01-01",
+      "reviewDate": "2024-12-31",
+      "version": "1.0.0",
+      "retentionRules": [
+        {
+          "dataType": "customer_personal_info",
+          "retentionPeriod": "7 years",
+          "retentionUnit": "years",
+          "retentionValue": 7,
+          "action": "delete",
+          "reason": "Legal compliance requirement"
+        },
+        {
+          "dataType": "transaction_history",
+          "retentionPeriod": "10 years",
+          "retentionUnit": "years",
+          "retentionValue": 10,
+          "action": "archive",
+          "reason": "Audit and regulatory requirements"
+        }
+      ],
+      "exceptions": [
+        "Data subject to legal hold",
+        "Data involved in active investigations"
+      ],
+      "compliance": [
+        "GDPR",
+        "CCPA",
+        "SOX"
+      ],
+      "tags": [
+        "retention",
+        "compliance",
+        "customer-data"
+      ],
+      "lastUpdated": "2025-11-12 19:23:11",
+      "externalLink": "https://www.google.com"
+    },
+    {
+      "id": "quality_policy_001",
+      "name": "Data Quality Standards Policy",
+      "type": "quality",
+      "description": "Establishes standards for data accuracy, completeness, consistency, and timeliness across all data assets",
+      "status": "active",
+      "priority": "high",
+      "category": "data-quality",
+      "owner": "Data Quality Team",
+      "stakeholders": [
+        "Data Engineering",
+        "Business Analysts",
+        "Data Scientists"
+      ],
+      "effectiveDate": "2024-01-01",
+      "reviewDate": "2024-06-30",
+      "version": "1.0.0",
+      "qualityStandards": [
+        {
+          "dimension": "accuracy",
+          "threshold": "95%",
+          "measurement": "percentage",
+          "description": "Data must be 95% accurate based on business rules"
+        },
+        {
+          "dimension": "completeness",
+          "threshold": "90%",
+          "measurement": "percentage",
+          "description": "Required fields must be 90% complete"
+        },
+        {
+          "dimension": "consistency",
+          "threshold": "98%",
+          "measurement": "percentage",
+          "description": "Data consistency across systems must be 98%"
+        },
+        {
+          "dimension": "timeliness",
+          "threshold": "24 hours",
+          "measurement": "time",
+          "description": "Data must be updated within 24 hours"
+        }
+      ],
+      "monitoring": [
+        "Automated quality checks",
+        "Regular quality assessments",
+        "Data profiling reports"
+      ],
+      "remediation": [
+        "Data cleansing procedures",
+        "Error correction workflows",
+        "Quality improvement initiatives"
+      ],
+      "tags": [
+        "quality",
+        "standards",
+        "monitoring"
+      ],
+      "lastUpdated": "2024-01-15 10:30:00"
+    },
+    {
+      "id": "access_policy_001",
+      "name": "Data Access Control Policy",
+      "type": "access",
+      "description": "Defines who can access what data, when, and under what conditions",
+      "status": "active",
+      "priority": "critical",
+      "category": "security",
+      "owner": "Information Security Team",
+      "stakeholders": [
+        "IT Security",
+        "Data Governance",
+        "HR"
+      ],
+      "effectiveDate": "2024-01-01",
+      "reviewDate": "2024-03-31",
+      "version": "1.0.0",
+      "accessLevels": [
+        {
+          "level": "public",
+          "description": "Available to all employees",
+          "dataTypes": [
+            "company_announcements",
+            "public_reports"
+          ]
+        },
+        {
+          "level": "internal",
+          "description": "Available to employees with business need",
+          "dataTypes": [
+            "operational_data",
+            "internal_reports"
+          ]
+        },
+        {
+          "level": "confidential",
+          "description": "Available only to authorized personnel",
+          "dataTypes": [
+            "customer_data",
+            "financial_data",
+            "employee_data"
+          ]
+        },
+        {
+          "level": "restricted",
+          "description": "Available only to specific roles with approval",
+          "dataTypes": [
+            "sensitive_customer_data",
+            "trade_secrets"
+          ]
+        }
+      ],
+      "authentication": [
+        "Multi-factor authentication required for confidential data",
+        "Role-based access control (RBAC)",
+        "Regular access reviews"
+      ],
+      "monitoring": [
+        "Access logs monitoring",
+        "Anomaly detection",
+        "Regular access audits"
+      ],
+      "tags": [
+        "access-control",
+        "security",
+        "authentication"
+      ],
+      "lastUpdated": "2024-01-15 10:30:00"
+    },
+    {
+      "id": "compliance_policy_001",
+      "name": "Regulatory Compliance Policy",
+      "type": "compliance",
+      "description": "Ensures adherence to all applicable laws, regulations, and industry standards",
+      "status": "active",
+      "priority": "critical",
+      "category": "compliance",
+      "owner": "Compliance Team",
+      "stakeholders": [
+        "Legal",
+        "Risk Management",
+        "Data Governance"
+      ],
+      "effectiveDate": "2024-01-01",
+      "reviewDate": "2024-12-31",
+      "version": "1.0.0",
+      "regulations": [
+        {
+          "name": "GDPR",
+          "country": "EU",
+          "requirements": [
+            "Data subject rights",
+            "Data minimization",
+            "Consent management",
+            "Breach notification"
+          ],
+          "deadlines": [
+            "72 hours for breach notification"
+          ]
+        },
+        {
+          "name": "CCPA",
+          "country": "California",
+          "requirements": [
+            "Consumer privacy rights",
+            "Opt-out mechanisms",
+            "Data disclosure requirements"
+          ],
+          "deadlines": [
+            "45 days for data requests"
+          ]
+        },
+        {
+          "name": "SOX",
+          "country": "US",
+          "requirements": [
+            "Financial reporting controls",
+            "Data integrity",
+            "Audit trails"
+          ],
+          "deadlines": [
+            "Annual compliance reporting"
+          ]
+        }
+      ],
+      "complianceChecks": [
+        "Regular compliance assessments",
+        "Third-party audits",
+        "Internal controls testing"
+      ],
+      "reporting": [
+        "Quarterly compliance reports",
+        "Annual compliance certification",
+        "Regulatory filings"
+      ],
+      "tags": [
+        "compliance",
+        "regulations",
+        "audit"
+      ],
+      "lastUpdated": "2024-01-15 10:30:00"
+    }
+  ]
+}

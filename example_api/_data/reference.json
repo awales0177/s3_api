@@ -1,0 +1,298 @@
+{
+  "items": [
+    {
+      "id": "ref-001",
+      "name": "Country Codes",
+      "category": "Geography",
+      "description": "Standard ISO country codes and names",
+      "lastUpdated": "2025-08-16 22:07:18",
+      "version": "1.0.0",
+      "status": "active",
+      "sensitivityLevel": "public",
+      "sourceDatasets": [
+        {
+          "source_system": "company_a",
+          "datasetId": "id1",
+          "datasetName": "isos1",
+          "apiLink": "https://github.com/"
+        },
+        {
+          "source_system": "company_b",
+          "datasetId": "id2",
+          "datasetName": "isos222"
+        },
+        {
+          "source_system": "Jane Smith",
+          "datasetId": "1.0.0",
+          "datasetName": "Data Team"
+        }
+      ],
+      "owner": "Data Governance Team",
+      "lineage": {
+        "upstream": [],
+        "downstream": [
+          {
+            "model": "CustomerModel",
+            "field": "countryOfResidence",
+            "relationship": "lookup"
+          },
+          {
+            "model": "SupplierModel",
+            "field": "registeredCountry",
+            "relationship": "enrichment"
+          }
+        ]
+      },
+      "changeLog": [
+        {
+          "version": "1.0.0",
+          "updatedBy": "Data Governance Team",
+          "updateReason": "Initial ISO country list ingestion",
+          "timestamp": "2024-03-20T10:00:00Z"
+        }
+      ],
+      "childTables": [
+        {
+          "id": "ref-001-1",
+          "name": "US States",
+          "description": "List of US states and their codes",
+          "columns": [
+            "stateCode",
+            "stateName"
+          ],
+          "rows": [
+            {
+              "stateCode": "CA",
+              "stateName": "California"
+            },
+            {
+              "stateCode": "NY",
+              "stateName": "New York"
+            }
+          ],
+          "rowCount": 2,
+          "sourceType": "authoritative",
+          "derivedFrom": "ref-001",
+          "transformations": [
+            "filter country = US",
+            "flatten regions"
+          ],
+          "lastReviewed": "2025-06-01T10:00:00Z",
+          "reviewFrequency": "quarterly",
+          "owner": "Data Governance Team"
+        },
+        {
+          "id": "ref-001-2",
+          "name": "Canadian Provinces",
+          "description": "List of Canadian provinces and their codes",
+          "columns": [
+            "provinceCode",
+            "provinceName"
+          ],
+          "rows": [
+            {
+              "provinceCode": "ON",
+              "provinceName": "Ontario"
+            },
+            {
+              "provinceCode": "QC",
+              "provinceName": "Quebec"
+            }
+          ],
+          "rowCount": 2,
+          "sourceType": "authoritative",
+          "derivedFrom": "ref-001",
+          "transformations": [
+            "filter country = CA",
+            "rename fields"
+          ],
+          "lastReviewed": "2025-06-01T10:00:00Z",
+          "reviewFrequency": "quarterly",
+          "owner": "Data Governance Team"
+        },
+        {
+          "id": "ref-001-3",
+          "name": "Country to Continent Mapping",
+          "description": "Map countries to their continents",
+          "columns": [
+            "countryCode",
+            "continent"
+          ],
+          "rows": [
+            {
+              "countryCode": "US",
+              "continent": "North America"
+            },
+            {
+              "countryCode": "FR",
+              "continent": "Europe"
+            }
+          ],
+          "rowCount": 2,
+          "sourceType": "derived",
+          "derivedFrom": "ref-001",
+          "transformations": [
+            "join on countryCode",
+            "add continent"
+          ],
+          "lastReviewed": "2025-06-01T10:00:00Z",
+          "reviewFrequency": "annually",
+          "owner": "Data Governance Team"
+        },
+        {
+          "id": "ref-001-4",
+          "name": "Country Calling Codes",
+          "description": "Telephone dialing codes for countries",
+          "columns": [
+            "countryCode",
+            "callingCode"
+          ],
+          "rows": [
+            {
+              "countryCode": "US",
+              "callingCode": "+1"
+            },
+            {
+              "countryCode": "GB",
+              "callingCode": "+44"
+            }
+          ],
+          "rowCount": 2,
+          "sourceType": "authoritative",
+          "derivedFrom": "ref-001",
+          "transformations": [
+            "enrich from ITU-T source"
+          ],
+          "lastReviewed": "2025-06-01T10:00:00Z",
+          "reviewFrequency": "semi-annually",
+          "owner": "Data Governance Team"
+        },
+        {
+          "id": "ref-001-5",
+          "name": "Official Country Names",
+          "description": "Formal names of countries",
+          "columns": [
+            "countryCode",
+            "officialName",
+            "as",
+            "name"
+          ],
+          "rows": [
+            {
+              "countryCode": "DE",
+              "officialName": "Federal Republic of Germany",
+              "as": "a",
+              "name": "Aaron"
+            },
+            {
+              "countryCode": "JP",
+              "officialName": "Japan",
+              "as": "",
+              "name": ""
+            }
+          ],
+          "rowCount": 2,
+          "sourceType": "custom",
+          "derivedFrom": "ref-001",
+          "transformations": [
+            "manual enrichment"
+          ],
+          "lastReviewed": "2025-06-01T10:00:00Z",
+          "reviewFrequency": "as-needed",
+          "owner": "Data Governance Team"
+        }
+      ]
+    },
+    {
+      "name": "Product agreement for product data",
+      "category": "ask",
+      "description": "please ask before changing",
+      "version": "1.0.2",
+      "status": "active",
+      "sensitivityLevel": "public",
+      "sourceDatasets": [
+        {
+          "source_system": "a",
+          "datasetId": "a",
+          "datasetName": "a",
+          "apiLink": "a"
+        }
+      ],
+      "owner": "a",
+      "upstreamLineage": [],
+      "downstreamLineage": [],
+      "changeLog": [
+        {
+          "version": "a",
+          "updatedBy": "a",
+          "updateReason": "a",
+          "timestamp": "2025-08-16T18:30:16.603Z"
+        },
+        {
+          "version": "h",
+          "updatedBy": "n",
+          "updateReason": "j",
+          "timestamp": "2025-08-21T03:25:23.040Z"
+        }
+      ],
+      "childTables": [
+        {
+          "id": "a",
+          "name": "a",
+          "description": "a",
+          "columns": [
+            "a",
+            "b",
+            "c",
+            "d",
+            "e",
+            "f"
+          ],
+          "rows": [
+            {
+              "a": "",
+              "b": "",
+              "c": "",
+              "d": "m",
+              "e": "m",
+              "f": "m"
+            }
+          ],
+          "rowCount": 1,
+          "sourceType": "s",
+          "derivedFrom": "ref-002",
+          "transformations": [],
+          "lastReviewed": "2025-08-16T18:31:11.895Z",
+          "reviewFrequency": "s",
+          "owner": "s"
+        }
+      ],
+      "lastUpdated": "2025-08-20 23:26:04",
+      "lineage": {
+        "upstream": [
+          {
+            "model": "a",
+            "field": "a",
+            "relationship": "a"
+          }
+        ]
+      },
+      "id": "ref-002"
+    },
+    {
+      "name": "hi",
+      "domain": [],
+      "description": "hi",
+      "version": "1.0.0",
+      "status": "active",
+      "sourceDatasets": [],
+      "owner": "",
+      "upstreamLineage": [],
+      "downstreamLineage": [],
+      "changeLog": [],
+      "childTables": [],
+      "lastUpdated": "2025-12-10 21:59:29",
+      "id": "ref-003"
+    }
+  ]
+}

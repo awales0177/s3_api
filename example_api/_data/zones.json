@@ -1,0 +1,47 @@
+{
+  "zones": [
+    {
+      "id": "citizen-services",
+      "name": "Citizen Services",
+      "description": "Data zones focused on citizen-facing services including customer data, tax, vehicle registration, property management, and business services",
+      "owner": "Citizen Services Team",
+      "lastUpdated": "2024-03-15"
+    },
+    {
+      "id": "public-services",
+      "name": "Public Services",
+      "description": "Data zones covering public service delivery including education, healthcare, housing, and social services",
+      "owner": "Public Services Team",
+      "lastUpdated": "2024-03-15"
+    },
+    {
+      "id": "infrastructure",
+      "name": "Infrastructure",
+      "description": "Data zones related to physical and digital infrastructure including transportation, utilities, infrastructure planning, and urban planning",
+      "owner": "Infrastructure Team",
+      "lastUpdated": "2024-03-15"
+    },
+    {
+      "id": "governance",
+      "name": "Governance",
+      "description": "Data zones supporting governance and administration including finance, legal services, safety, and communications",
+      "owner": "Governance Team",
+      "lastUpdated": "2024-03-15"
+    },
+    {
+      "id": "community",
+      "name": "Community",
+      "description": "Data zones focused on community engagement and quality of life including environment, recreation, cultural activities, and tourism",
+      "owner": "Community Services Team",
+      "lastUpdated": "2024-03-15"
+    },
+    {
+      "id": "operations",
+      "name": "Operations",
+      "description": "Data zones supporting operational functions including technology infrastructure, agriculture, and property management",
+      "owner": "Operations Team",
+      "lastUpdated": "2024-03-15"
+    }
+  ]
+}
+

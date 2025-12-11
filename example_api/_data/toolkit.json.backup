@@ -1,0 +1,782 @@
+{
+  "toolkit": {
+    "functions": [
+      {
+        "id": "9d01dc44-4460-4460-8658-ae2b87541f21",
+        "name": "data_validation_utility",
+        "displayName": "Data Validation Utility",
+        "description": "A comprehensive data validation function that checks data types, formats, and business rules",
+        "language": "python",
+        "category": "data-processing",
+        "tags": [
+          "validation",
+          "data",
+          "utility"
+        ],
+        "code": "def validate_data(data, schema):\n    # Data validation logic here\n    pass",
+        "author": "Data Team",
+        "version": "1.0.0",
+        "lastUpdated": "2025-08-28T00:01:34.133730",
+        "usage": "Import and use for any data validation needs",
+        "dependencies": [
+          "pydantic",
+          "jsonschema"
+        ],
+        "examples": [
+          "data_cleaning",
+          "api_validation",
+          "database_checks"
+        ],
+        "parameters": [
+          {
+            "name": "data",
+            "type": "any",
+            "description": "The data to be validated against the schema",
+            "required": true,
+            "example": {
+              "name": "John",
+              "age": 30
+            }
+          },
+          {
+            "name": "schema",
+            "type": "dict",
+            "description": "The validation schema defining the expected data structure",
+            "required": true,
+            "example": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "age": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          {
+            "name": "strict",
+            "type": "boolean",
+            "description": "Whether to enforce strict validation rules",
+            "required": false,
+            "default": false,
+            "allowedValues": [
+              true,
+              false
+            ]
+          },
+          {
+            "name": "maxErrors",
+            "type": "integer",
+            "description": "Maximum number of validation errors to collect before stopping",
+            "required": false,
+            "default": 10,
+            "min": 1,
+            "max": 100
+          },
+          {
+            "name": "datetype",
+            "type": "string",
+            "description": "Type of data to validate - either date or time format",
+            "required": true,
+            "allowedValues": [
+              "date",
+              "time"
+            ],
+            "default": "date",
+            "example": "date"
+          }
+        ],
+        "git": "https://github.com/example/data-validation-utility",
+        "rating": 4.8,
+        "downloads": 156,
+        "clickCount": 1
+      },
+      {
+        "id": "925ed9a2-9d8e-4dbf-b18e-3650ad28b2f0",
+        "name": "api_rate_limiter",
+        "displayName": "API Rate Limiter",
+        "description": "Efficient rate limiting implementation for API endpoints with Redis backend",
+        "language": "javascript",
+        "category": "api-management",
+        "tags": [
+          "rate-limiting",
+          "api",
+          "redis",
+          "performance"
+        ],
+        "code": "class RateLimiter {\n  constructor(options) {\n    // Rate limiting logic\n  }\n}",
+        "author": "DevOps Team",
+        "version": "2.1.0",
+        "lastUpdated": "2024-01-20T14:30:00Z",
+        "usage": "Add to Express.js middleware for API protection",
+        "dependencies": [
+          "redis",
+          "express"
+        ],
+        "examples": [
+          "user_api",
+          "public_api",
+          "webhook_endpoints"
+        ],
+        "parameters": [
+          {
+            "name": "options",
+            "type": "object",
+            "description": "Configuration options for the rate limiter including limits and time windows",
+            "required": true,
+            "example": {
+              "maxRequests": 100,
+              "windowMs": 60000
+            }
+          },
+          {
+            "name": "maxRequests",
+            "type": "integer",
+            "description": "Maximum number of requests allowed per time window",
+            "required": false,
+            "default": 100,
+            "min": 1,
+            "max": 10000
+          },
+          {
+            "name": "windowMs",
+            "type": "integer",
+            "description": "Time window in milliseconds for rate limiting",
+            "required": false,
+            "default": 60000,
+            "min": 1000,
+            "max": 3600000,
+            "example": 60000
+          },
+          {
+            "name": "skipSuccessfulRequests",
+            "type": "boolean",
+            "description": "Whether to skip rate limiting for successful requests",
+            "required": false,
+            "default": false,
+            "allowedValues": [
+              true,
+              false
+            ]
+          }
+        ],
+        "git": "https://github.com/example/api-rate-limiter",
+        "rating": 4.9,
+        "downloads": 89,
+        "clickCount": 1
+      },
+      {
+        "id": "f376221c-ff07-4ce3-aea5-f6312aa62af1",
+        "name": "what_do_i_do",
+        "displayName": "What Do I Do Function",
+        "description": "A placeholder function for testing and demonstration purposes",
+        "type": "functions",
+        "category": "utility",
+        "tags": [
+          "placeholder",
+          "test",
+          "demo"
+        ],
+        "author": "Developer",
+        "version": "1.0.0",
+        "lastUpdated": "2025-08-28T00:10:59.568073",
+        "usage": "This is a placeholder function for testing the toolkit system",
+        "dependencies": [],
+        "examples": [
+          "testing",
+          "demonstration"
+        ],
+        "git": "",
+        "rating": 5,
+        "downloads": 0,
+        "language": "python",
+        "code": "# This is a placeholder function\ndef what_do_i_do():\n    return 'This is a test function'",
+        "parameters": []
+      },
+      {
+        "id": "88f87bbc-0d07-4455-afa9-686d360adee6",
+        "name": "data_transformer",
+        "displayName": "Data Transformer",
+        "description": "Flexible data transformation utility that can convert between various data formats and structures",
+        "language": "python",
+        "category": "data-processing",
+        "tags": [
+          "transformation",
+          "data",
+          "conversion",
+          "utility"
+        ],
+        "code": "def transform_data(data, transformation_rules):\n    # Data transformation logic here\n    transformed = {}\n    for rule in transformation_rules:\n        # Apply transformation rules\n        pass\n    return transformed",
+        "author": "Data Engineering Team",
+        "version": "1.0.0",
+        "lastUpdated": "2025-01-15T10:30:00Z",
+        "usage": "Use for converting data between different formats and schemas",
+        "dependencies": [
+          "pandas",
+          "numpy"
+        ],
+        "examples": [
+          "csv_to_json",
+          "schema_migration",
+          "data_cleaning"
+        ],
+        "parameters": [
+          {
+            "name": "data",
+            "type": "any",
+            "description": "Input data to be transformed",
+            "required": true
+          },
+          {
+            "name": "transformation_rules",
+            "type": "list",
+            "description": "List of transformation rules to apply",
+            "required": true
+          }
+        ],
+        "git": "https://github.com/example/data-transformer",
+        "rating": 4.7,
+        "downloads": 78,
+        "clickCount": 1
+      },
+      {
+        "id": "5fe4f8e5-345a-40ab-a676-4dd6019b5ab1",
+        "name": "file_processor",
+        "displayName": "File Processo",
+        "description": "Efficient file processing utility with support for multiple file formats and batch operations",
+        "language": "python",
+        "category": "file-management",
+        "tags": [
+          "file",
+          "processing",
+          "batch",
+          "utility"
+        ],
+        "code": "def process_files(file_paths, processor_func):\n    results = []\n    for file_path in file_paths:\n        # Process each file\n        result = processor_func(file_path)\n        results.append(result)\n    return results",
+        "author": "Backend Team",
+        "version": "1.2.0",
+        "lastUpdated": "2025-09-09T03:50:33.931363",
+        "usage": "Process multiple files in batch with custom processing logic",
+        "dependencies": [
+          "pathlib",
+          "pandas"
+        ],
+        "examples": [
+          "batch_csv_processing",
+          "log_file_analysis",
+          "image_processing"
+        ],
+        "parameters": [
+          {
+            "name": "file_paths",
+            "type": "list",
+            "description": "List of file paths to process",
+            "required": true
+          },
+          {
+            "name": "processor_func",
+            "type": "function",
+            "description": "Function to apply to each file",
+            "required": true
+          }
+        ],
+        "git": "https://github.com/example/file-processor",
+        "rating": 4.6,
+        "downloads": 92
+      },
+      {
+        "id": "dfb5764e-0d55-4f4a-8cf3-149d799b3c8e",
+        "name": "load",
+        "displayName": "Load",
+        "description": "Load arrays or pickled objects from ``.npy``, ``.npz`` or pickled files.",
+        "type": "functions",
+        "category": "library-function",
+        "tags": [
+          "numpy",
+          "auto-generated"
+        ],
+        "author": "numpy library",
+        "version": "1.26.3",
+        "lastUpdated": "2025-12-02T19:49:36.916402",
+        "usage": "from numpy import load",
+        "dependencies": [
+          "numpy"
+        ],
+        "examples": [],
+        "git": "",
+        "rating": 5,
+        "downloads": 0,
+        "language": "python",
+        "code": "@set_module('numpy')\ndef load(file, mmap_mode=None, allow_pickle=False, fix_imports=True,\n         encoding='ASCII', *, max_header_size=format._MAX_HEADER_SIZE):\n    \"\"\"\n    Load arrays or pickled objects from ``.npy``, ``.npz`` or pickled files.\n\n    .. warning:: Loading files that contain object arrays uses the ``pickle``\n                 module, which is not secure against erroneous or maliciously\n                 constructed data. Consider passing ``allow_pickle=False`` to\n                 load data that is known not to contain object arrays for the\n                 safer handling of untrusted sources.\n\n    Parameters\n    ----------\n    file : file-like object, string, or pathlib.Path\n        The file to read. File-like objects must support the\n        ``seek()`` and ``read()`` methods and must always\n        be opened in binary mode.  Pickled files require that the\n        file-like object support the ``readline()`` method as well.\n    mmap_mode : {None, 'r+', 'r', 'w+', 'c'}, optional\n        If not None, then memory-map the file, using the given mode (see\n        `numpy.memmap` for a detailed description of the modes).  A\n        memory-mapped array is kept on disk. However, it can be accessed\n        and sliced like any ndarray.  Memory mapping is especially useful\n        for accessing small fragments of large files without reading the\n        entire file into memory.\n    allow_pickle : bool, optional\n        Allow loading pickled object arrays stored in npy files. Reasons for\n        disallowing pickles include security, as loading pickled data can\n        execute arbitrary code. If pickles are disallowed, loading object\n        arrays will fail. Default: False\n\n        .. versionchanged:: 1.16.3\n            Made default False in response to CVE-2019-6446.\n\n    fix_imports : bool, optional\n        Only useful when loading Python 2 generated pickled files on Python 3,\n        which includes npy/npz files containing object arrays. If `fix_imports`\n        is True, pickle will try to map the old Python 2 names to the new names\n        used in Python 3.\n    encoding : str, optional\n        What encoding to use when reading Python 2 strings. Only useful when\n        loading Python 2 generated pickled files in Python 3, which includes\n        npy/npz files containing object arrays. Values other than 'latin1',\n        'ASCII', and 'bytes' are not allowed, as they can corrupt numerical\n        data. Default: 'ASCII'\n    max_header_size : int, optional\n        Maximum allowed size of the header.  Large headers may not be safe\n        to load securely and thus require explicitly passing a larger value.\n        See :py:func:`ast.literal_eval()` for details.\n        This option is ignored when `allow_pickle` is passed.  In that case\n        the file is by definition trusted and the limit is unnecessary.\n\n    Returns\n    -------\n    result : array, tuple, dict, etc.\n        Data stored in the file. For ``.npz`` files, the returned instance\n        of NpzFile class must be closed to avoid leaking file descriptors.\n\n    Raises\n    ------\n    OSError\n        If the input file does not exist or cannot be read.\n    UnpicklingError\n        If ``allow_pickle=True``, but the file cannot be loaded as a pickle.\n    ValueError\n        The file contains an object array, but ``allow_pickle=False`` given.\n    EOFError\n        When calling ``np.load`` multiple times on the same file handle,\n        if all data has already been read\n\n    See Also\n    --------\n    save, savez, savez_compressed, loadtxt\n    memmap : Create a memory-map to an array stored in a file on disk.\n    lib.format.open_memmap : Create or load a memory-mapped ``.npy`` file.\n\n    Notes\n    -----\n    - If the file contains pickle data, then whatever object is stored\n      in the pickle is returned.\n    - If the file is a ``.npy`` file, then a single array is returned.\n    - If the file is a ``.npz`` file, then a dictionary-like object is\n      returned, containing ``{filename: array}`` key-value pairs, one for\n      each file in the archive.\n    - If the file is a ``.npz`` file, the returned value supports the\n      context manager protocol in a similar fashion to the open function::\n\n        with load('foo.npz') as data:\n            a = data['a']\n\n      The underlying file descriptor is closed when exiting the 'with'\n      block.\n\n    Examples\n    --------\n    Store data to disk, and load it again:\n\n    >>> np.save('/tmp/123', np.array([[1, 2, 3], [4, 5, 6]]))\n    >>> np.load('/tmp/123.npy')\n    array([[1, 2, 3],\n           [4, 5, 6]])\n\n    Store compressed data to disk, and load it again:\n\n    >>> a=np.array([[1, 2, 3], [4, 5, 6]])\n    >>> b=np.array([1, 2])\n    >>> np.savez('/tmp/123.npz', a=a, b=b)\n    >>> data = np.load('/tmp/123.npz')\n    >>> data['a']\n    array([[1, 2, 3],\n           [4, 5, 6]])\n    >>> data['b']\n    array([1, 2])\n    >>> data.close()\n\n    Mem-map the stored array, and then access the second row\n    directly from disk:\n\n    >>> X = np.load('/tmp/123.npy', mmap_mode='r')\n    >>> X[1, :]\n    memmap([4, 5, 6])\n\n    \"\"\"\n    if encoding not in ('ASCII', 'latin1', 'bytes'):\n        # The 'encoding' value for pickle also affects what encoding\n        # the serialized binary data of NumPy arrays is loaded\n        # in. Pickle does not pass on the encoding information to\n        # NumPy. The unpickling code in numpy.core.multiarray is\n        # written to assume that unicode data appearing where binary\n        # should be is in 'latin1'. 'bytes' is also safe, as is 'ASCII'.\n        #\n        # Other encoding values can corrupt binary data, and we\n        # purposefully disallow them. For the same reason, the errors=\n        # argument is not exposed, as values other than 'strict'\n        # result can similarly silently corrupt numerical data.\n        raise ValueError(\"encoding must be 'ASCII', 'latin1', or 'bytes'\")\n\n    pickle_kwargs = dict(encoding=encoding, fix_imports=fix_imports)\n\n    with contextlib.ExitStack() as stack:\n        if hasattr(file, 'read'):\n            fid = file\n            own_fid = False\n        else:\n            fid = stack.enter_context(open(os_fspath(file), \"rb\"))\n            own_fid = True\n\n        # Code to distinguish from NumPy binary files and pickles.\n        _ZIP_PREFIX = b'PK\\x03\\x04'\n        _ZIP_SUFFIX = b'PK\\x05\\x06' # empty zip files start with this\n        N = len(format.MAGIC_PREFIX)\n        magic = fid.read(N)\n        if not magic:\n            raise EOFError(\"No data left in file\")\n        # If the file size is less than N, we need to make sure not\n        # to seek past the beginning of the file\n        fid.seek(-min(N, len(magic)), 1)  # back-up\n        if magic.startswith(_ZIP_PREFIX) or magic.startswith(_ZIP_SUFFIX):\n            # zip-file (assume .npz)\n            # Potentially transfer file ownership to NpzFile\n            stack.pop_all()\n            ret = NpzFile(fid, own_fid=own_fid, allow_pickle=allow_pickle,\n                          pickle_kwargs=pickle_kwargs,\n                          max_header_size=max_header_size)\n            return ret\n        elif magic == format.MAGIC_PREFIX:\n            # .npy file\n            if mmap_mode:\n                if allow_pickle:\n                    max_header_size = 2**64\n                return format.open_memmap(file, mode=mmap_mode,\n                                          max_header_size=max_header_size)\n            else:\n                return format.read_array(fid, allow_pickle=allow_pickle,\n                                         pickle_kwargs=pickle_kwargs,\n                                         max_header_size=max_header_size)\n        else:\n            # Try a pickle\n            if not allow_pickle:\n                raise ValueError(\"Cannot load file containing pickled data \"\n                                 \"when allow_pickle=False\")\n            try:\n                return pickle.load(fid, **pickle_kwargs)\n            except Exception as e:\n                raise pickle.UnpicklingError(\n                    f\"Failed to interpret file {file!r} as a pickle\") from e\n",
+        "parameters": [
+          {
+            "name": "file",
+            "type": "any",
+            "description": "",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "mmap_mode",
+            "type": "any",
+            "description": "",
+            "required": false,
+            "default": "None"
+          },
+          {
+            "name": "allow_pickle",
+            "type": "any",
+            "description": "",
+            "required": false,
+            "default": "False"
+          },
+          {
+            "name": "fix_imports",
+            "type": "any",
+            "description": "",
+            "required": false,
+            "default": "True"
+          },
+          {
+            "name": "encoding",
+            "type": "any",
+            "description": "",
+            "required": false,
+            "default": "ASCII"
+          },
+          {
+            "name": "max_header_size",
+            "type": "any",
+            "description": "",
+            "required": false,
+            "default": "10000"
+          }
+        ]
+      },
+      {
+        "id": "0d66eafa-199f-420f-83b3-47753d2a7471",
+        "name": "cast",
+        "displayName": "Cast",
+        "description": "Cast a value to a type.",
+        "type": "functions",
+        "category": "library-function",
+        "tags": [
+          "pyspark",
+          "auto-generated"
+        ],
+        "author": "pyspark library",
+        "version": "4.0.1",
+        "lastUpdated": "2025-12-02T20:07:46.474268",
+        "usage": "from pyspark import cast",
+        "dependencies": [
+          "pyspark"
+        ],
+        "examples": [],
+        "git": "",
+        "rating": 5.0,
+        "downloads": 0,
+        "clickCount": 0,
+        "language": "python",
+        "code": "def cast(typ, val):\n    \"\"\"Cast a value to a type.\n\n    This returns the value unchanged.  To the type checker this\n    signals that the return value has the designated type, but at\n    runtime we intentionally don't check anything (we want this\n    to be as fast as possible).\n    \"\"\"\n    return val\n",
+        "parameters": [
+          {
+            "name": "typ",
+            "type": "any",
+            "description": "",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "val",
+            "type": "any",
+            "description": "",
+            "required": true,
+            "default": null
+          }
+        ]
+      },
+      {
+        "id": "88127fef-4b02-4809-ba8f-5d08dc20c48c",
+        "name": "inheritable_thread_target",
+        "displayName": "Inheritable Thread Target",
+        "description": "Return thread target wrapper which is recommended to be used in PySpark when the",
+        "type": "functions",
+        "category": "library-function",
+        "tags": [
+          "pyspark",
+          "auto-generated"
+        ],
+        "author": "pyspark library",
+        "version": "4.0.1",
+        "lastUpdated": "2025-12-02T20:07:46.509729",
+        "usage": "from pyspark import inheritable_thread_target",
+        "dependencies": [
+          "pyspark"
+        ],
+        "examples": [],
+        "git": "",
+        "rating": 5.0,
+        "downloads": 0,
+        "clickCount": 0,
+        "language": "python",
+        "code": "def inheritable_thread_target(f: Optional[Union[Callable, \"SparkSession\"]] = None) -> Callable:\n    \"\"\"\n    Return thread target wrapper which is recommended to be used in PySpark when the\n    pinned thread mode is enabled. The wrapper function, before calling original\n    thread target, it inherits the inheritable properties specific\n    to JVM thread such as ``InheritableThreadLocal``, or thread local such as tags\n    with Spark Connect.\n\n    When the pinned thread mode is off, it return the original ``f``.\n\n    .. versionadded:: 3.2.0\n\n    .. versionchanged:: 3.5.0\n        Supports Spark Connect.\n\n    Parameters\n    ----------\n    f : function, or :class:`SparkSession`\n        the original thread target, or :class:`SparkSession` if Spark Connect is being used.\n        See the examples below.\n\n    Notes\n    -----\n    This API is experimental.\n\n    It is important to know that it captures the local properties or tags when you\n    decorate it whereas :class:`InheritableThread` captures when the thread is started.\n    Therefore, it is encouraged to decorate it when you want to capture the local\n    properties.\n\n    For example, the local properties or tags from the current Spark context or Spark\n    session is captured when you define a function here instead of the invocation:\n\n    >>> @inheritable_thread_target\n    ... def target_func():\n    ...     pass  # your codes.\n\n    If you have any updates on local properties or tags afterwards, it would not be\n    reflected to the Spark context in ``target_func()``.\n\n    The example below mimics the behavior of JVM threads as close as possible:\n\n    >>> Thread(target=inheritable_thread_target(target_func)).start()  # doctest: +SKIP\n\n    If you're using Spark Connect or if you want to inherit the tags properly,\n    you should explicitly provide Spark session as follows:\n\n    >>> @inheritable_thread_target(session)  # doctest: +SKIP\n    ... def target_func():\n    ...     pass  # your codes.\n\n    >>> Thread(target=inheritable_thread_target(session)(target_func)).start()  # doctest: +SKIP\n    \"\"\"\n    from pyspark.sql import is_remote\n\n    # Spark Connect\n    if is_remote():\n        session = f\n        assert session is not None, \"Spark Connect session must be provided.\"\n\n        def outer(ff: Callable) -> Callable:\n            thread_local = session.client.thread_local  # type: ignore[union-attr, operator]\n            session_client_thread_local_attrs = [\n                (attr, copy.deepcopy(value))\n                for (\n                    attr,\n                    value,\n                ) in thread_local.__dict__.items()\n            ]\n\n            @functools.wraps(ff)\n            def inner(*args: Any, **kwargs: Any) -> Any:\n                # Set thread locals in child thread.\n                for attr, value in session_client_thread_local_attrs:\n                    setattr(\n                        session.client.thread_local,  # type: ignore[union-attr, operator]\n                        attr,\n                        value,\n                    )\n                return ff(*args, **kwargs)\n\n            return inner\n\n        return outer\n\n    # Non Spark Connect with SparkSession or Callable\n    from pyspark.sql import SparkSession\n    from pyspark import SparkContext\n    from py4j.clientserver import ClientServer\n\n    if isinstance(SparkContext._gateway, ClientServer):\n        # Here's when the pinned-thread mode (PYSPARK_PIN_THREAD) is on.\n\n        if isinstance(f, SparkSession):\n            session = f\n            assert session is not None\n            tags = set(session.getTags())\n            # Local properties are copied when wrapping the function.\n            assert SparkContext._active_spark_context is not None\n            properties = SparkContext._active_spark_context._jsc.sc().getLocalProperties().clone()\n\n            def outer(ff: Callable) -> Callable:\n                @functools.wraps(ff)\n                def wrapped(*args: Any, **kwargs: Any) -> Any:\n                    # Apply properties and tags in the child thread.\n                    assert SparkContext._active_spark_context is not None\n                    SparkContext._active_spark_context._jsc.sc().setLocalProperties(properties)\n                    for tag in tags:\n                        session.addTag(tag)  # type: ignore[union-attr]\n                    return ff(*args, **kwargs)\n\n                return wrapped\n\n            return outer\n\n        warnings.warn(\n            \"Spark session is not provided. Tags will not be inherited.\",\n            UserWarning,\n        )\n\n        # NOTICE the internal difference vs `InheritableThread`. `InheritableThread`\n        # copies local properties when the thread starts but `inheritable_thread_target`\n        # copies when the function is wrapped.\n        assert SparkContext._active_spark_context is not None\n        properties = SparkContext._active_spark_context._jsc.sc().getLocalProperties().clone()\n        assert callable(f)\n\n        @functools.wraps(f)\n        def wrapped(*args: Any, **kwargs: Any) -> Any:\n            # Set local properties in child thread.\n            assert SparkContext._active_spark_context is not None\n            SparkContext._active_spark_context._jsc.sc().setLocalProperties(properties)\n            return f(*args, **kwargs)  # type: ignore[misc, operator]\n\n        return wrapped\n    else:\n        return f  # type: ignore[return-value]\n",
+        "parameters": [
+          {
+            "name": "f",
+            "type": "typing.Union[typing.Callable, ForwardRef('SparkSession'), NoneType]",
+            "description": "",
+            "required": false,
+            "default": "None"
+          }
+        ]
+      },
+      {
+        "id": "c02ed318-77bc-47d0-a99d-af741d70f1ce",
+        "name": "is_remote_only",
+        "displayName": "Is Remote Only",
+        "description": "Returns if the current running environment is only for Spark Connect.",
+        "type": "functions",
+        "category": "library-function",
+        "tags": [
+          "pyspark",
+          "auto-generated"
+        ],
+        "author": "pyspark library",
+        "version": "4.0.1",
+        "lastUpdated": "2025-12-02T20:07:46.518231",
+        "usage": "from pyspark import is_remote_only",
+        "dependencies": [
+          "pyspark"
+        ],
+        "examples": [],
+        "git": "",
+        "rating": 5.0,
+        "downloads": 0,
+        "clickCount": 0,
+        "language": "python",
+        "code": "def is_remote_only() -> bool:\n    \"\"\"\n    Returns if the current running environment is only for Spark Connect.\n    If users install pyspark-client alone, RDD API does not exist.\n\n    .. versionadded:: 4.0.0\n\n    Notes\n    -----\n    This will only return ``True`` if installed PySpark is only for Spark Connect.\n    Otherwise, it returns ``False``.\n\n    This API is unstable, and for developers.\n\n    Returns\n    -------\n    bool\n\n    Examples\n    --------\n    >>> from pyspark.sql import is_remote\n    >>> is_remote()\n    False\n    \"\"\"\n    global _is_remote_only\n\n    if \"SPARK_SKIP_CONNECT_COMPAT_TESTS\" in os.environ:\n        return True\n\n    if _is_remote_only is not None:\n        return _is_remote_only\n    try:\n        from pyspark import core  # noqa: F401\n\n        _is_remote_only = False\n        return _is_remote_only\n    except ImportError:\n        _is_remote_only = True\n        return _is_remote_only\n",
+        "parameters": []
+      },
+      {
+        "id": "c09a4e73-1b60-424f-93b3-054aed77cff1",
+        "name": "keyword_only",
+        "displayName": "Keyword Only",
+        "description": "A decorator that forces keyword arguments in the wrapped method",
+        "type": "functions",
+        "category": "library-function",
+        "tags": [
+          "pyspark",
+          "auto-generated"
+        ],
+        "author": "pyspark library",
+        "version": "4.0.1",
+        "lastUpdated": "2025-12-02T20:07:46.524052",
+        "usage": "from pyspark import keyword_only",
+        "dependencies": [
+          "pyspark"
+        ],
+        "examples": [],
+        "git": "",
+        "rating": 5.0,
+        "downloads": 0,
+        "clickCount": 0,
+        "language": "python",
+        "code": "def keyword_only(func: _F) -> _F:\n    \"\"\"\n    A decorator that forces keyword arguments in the wrapped method\n    and saves actual input keyword arguments in `_input_kwargs`.\n\n    Notes\n    -----\n    Should only be used to wrap a method where first arg is `self`\n    \"\"\"\n\n    @wraps(func)\n    def wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:\n        if len(args) > 0:\n            raise TypeError(\"Method %s forces keyword arguments.\" % func.__name__)\n        self._input_kwargs = kwargs\n        return func(self, **kwargs)\n\n    return cast(_F, wrapper)\n",
+        "parameters": [
+          {
+            "name": "func",
+            "type": "~_F",
+            "description": "",
+            "required": true,
+            "default": null
+          }
+        ]
+      },
+      {
+        "id": "684bea60-18bd-4aaa-abd5-0d3980ef51f7",
+        "name": "since",
+        "displayName": "Since",
+        "description": "A decorator that annotates a function to append the version of Spark the function was added.",
+        "type": "functions",
+        "category": "library-function",
+        "tags": [
+          "pyspark",
+          "auto-generated"
+        ],
+        "author": "pyspark library",
+        "version": "4.0.1",
+        "lastUpdated": "2025-12-02T20:07:46.530424",
+        "usage": "from pyspark import since",
+        "dependencies": [
+          "pyspark"
+        ],
+        "examples": [],
+        "git": "",
+        "rating": 5.0,
+        "downloads": 0,
+        "clickCount": 0,
+        "language": "python",
+        "code": "def since(version: Union[str, float]) -> Callable[[_F], _F]:\n    \"\"\"\n    A decorator that annotates a function to append the version of Spark the function was added.\n    \"\"\"\n    import re\n\n    indent_p = re.compile(r\"\\n( +)\")\n\n    def deco(f: _F) -> _F:\n        assert f.__doc__ is not None\n\n        indents = indent_p.findall(f.__doc__)\n        indent = \" \" * (min(len(m) for m in indents) if indents else 0)\n        f.__doc__ = f.__doc__.rstrip() + \"\\n\\n%s.. versionadded:: %s\" % (indent, version)\n        return f\n\n    return deco\n",
+        "parameters": [
+          {
+            "name": "version",
+            "type": "typing.Union[str, float]",
+            "description": "",
+            "required": true,
+            "default": null
+          }
+        ]
+      },
+      {
+        "id": "5b426587-1355-4e79-9a7e-16a0eb1bd938",
+        "name": "wraps",
+        "displayName": "Wraps",
+        "description": "Decorator factory to apply update_wrapper() to a wrapper function",
+        "type": "functions",
+        "category": "library-function",
+        "tags": [
+          "pyspark",
+          "auto-generated"
+        ],
+        "author": "pyspark library",
+        "version": "4.0.1",
+        "lastUpdated": "2025-12-02T20:07:46.535445",
+        "usage": "from pyspark import wraps",
+        "dependencies": [
+          "pyspark"
+        ],
+        "examples": [],
+        "git": "",
+        "rating": 5.0,
+        "downloads": 0,
+        "clickCount": 1,
+        "language": "python",
+        "code": "def wraps(wrapped,\n          assigned = WRAPPER_ASSIGNMENTS,\n          updated = WRAPPER_UPDATES):\n    \"\"\"Decorator factory to apply update_wrapper() to a wrapper function\n\n       Returns a decorator that invokes update_wrapper() with the decorated\n       function as the wrapper argument and the arguments to wraps() as the\n       remaining arguments. Default arguments are as for update_wrapper().\n       This is a convenience function to simplify applying partial() to\n       update_wrapper().\n    \"\"\"\n    return partial(update_wrapper, wrapped=wrapped,\n                   assigned=assigned, updated=updated)\n",
+        "parameters": [
+          {
+            "name": "wrapped",
+            "type": "any",
+            "description": "",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "assigned",
+            "type": "any",
+            "description": "",
+            "required": false,
+            "default": "('__module__', '__name__', '__qualname__', '__doc__', '__annotations__')"
+          },
+          {
+            "name": "updated",
+            "type": "any",
+            "description": "",
+            "required": false,
+            "default": "('__dict__',)"
+          }
+        ]
+      }
+    ],
+    "containers": [
+      {
+        "id": "cont_001",
+        "name": "PostgreSQL Development Container",
+        "description": "Ready-to-use PostgreSQL container with common development tools and extensions",
+        "type": "docker",
+        "category": "database",
+        "tags": [
+          "postgresql",
+          "database",
+          "development",
+          "docker"
+        ],
+        "dockerfile": "FROM postgres:15\n# Development setup\nRUN apt-get update && apt-get install -y \\\n    postgresql-contrib \\\n    postgresql-15-postgis-3",
+        "dockerCompose": "version: '3.8'\nservices:\n  postgres:\n    build: .\n    environment:\n      POSTGRES_DB: devdb\n      POSTGRES_USER: devuser",
+        "author": "Infrastructure Team",
+        "version": "1.2.0",
+        "lastUpdated": "2025-11-12T18:30:15.774185",
+        "usage": "Perfect for local development and testing",
+        "dependencies": [
+          "docker",
+          "docker-compose"
+        ],
+        "examples": [
+          "local_dev",
+          "testing",
+          "ci_cd"
+        ],
+        "rating": 4.7,
+        "downloads": 203,
+        "displayName": "PostgreSQL Development Container",
+        "git": ""
+      },
+      {
+        "id": "cont_002",
+        "name": "Node.js Microservice Base",
+        "description": "Lightweight Node.js container optimized for microservices with health checks",
+        "type": "docker",
+        "category": "runtime",
+        "tags": [
+          "nodejs",
+          "microservice",
+          "health-check",
+          "optimized"
+        ],
+        "dockerfile": "FROM node:18-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --only=production",
+        "dockerCompose": "version: '3.8'\nservices:\n  app:\n    build: .\n    ports:\n      - '3000:3000'\n    healthcheck:\n      test: ['CMD', 'curl', '-f', 'http://localhost:3000/health']",
+        "author": "Backend Team",
+        "version": "1.0.0",
+        "lastUpdated": "2024-01-22T16:45:00Z",
+        "usage": "Base image for Node.js microservices",
+        "dependencies": [
+          "docker"
+        ],
+        "examples": [
+          "api_service",
+          "worker_service",
+          "webhook_service"
+        ],
+        "rating": 4.6,
+        "downloads": 134
+      },
+      {
+        "id": "cont_003",
+        "name": "dfffgfdg",
+        "displayName": "dfffgfdg",
+        "description": "fdgdf",
+        "type": "containers",
+        "category": "web-server",
+        "tags": [],
+        "author": "",
+        "version": "1.0.0",
+        "lastUpdated": "2025-11-12T18:36:50.325905",
+        "usage": "",
+        "dependencies": [],
+        "examples": [],
+        "git": "",
+        "rating": 5,
+        "downloads": 0,
+        "dockerfile": "dfgfdgd",
+        "dockerCompose": "dfgdfgf"
+      },
+      {
+        "id": "cont_004",
+        "name": "fhgfh",
+        "displayName": "fhgfh",
+        "description": "ffghfghgfh",
+        "type": "containers",
+        "category": "message-queue",
+        "tags": [],
+        "author": "",
+        "version": "1.0.0",
+        "lastUpdated": "2025-11-12T18:41:03.855810",
+        "usage": "",
+        "dependencies": [],
+        "examples": [],
+        "git": "",
+        "rating": 5,
+        "downloads": 0,
+        "dockerfile": "fghfgh",
+        "dockerCompose": ""
+      }
+    ],
+    "infrastructure": [
+      {
+        "id": "tf_001",
+        "name": "AWS VPC with Private Subnets",
+        "description": "Complete VPC setup with public/private subnets, NAT gateway, and security groups",
+        "provider": "aws",
+        "category": "networking",
+        "tags": [
+          "aws",
+          "vpc",
+          "networking",
+          "security",
+          "infrastructure"
+        ],
+        "mainTf": "resource \"aws_vpc\" \"main\" {\n  cidr_block = var.vpc_cidr\n  \n  tags = {\n    Name = \"${var.environment}-vpc\"\n  }\n}",
+        "variablesTf": "variable \"vpc_cidr\" {\n  description = \"CIDR block for VPC\"\n  type        = string\n  default     = \"10.0.0.0/16\"\n}",
+        "outputsTf": "output \"vpc_id\" {\n  value = aws_vpc.main.id\n}",
+        "author": "Cloud Team",
+        "version": "2.0.0",
+        "lastUpdated": "2024-01-19T11:20:00Z",
+        "usage": "Deploy secure VPC infrastructure for production workloads",
+        "dependencies": [
+          "terraform",
+          "aws_provider"
+        ],
+        "examples": [
+          "production_env",
+          "staging_env",
+          "multi_az_setup"
+        ],
+        "rating": 4.9,
+        "downloads": 312
+      },
+      {
+        "id": "tf_002",
+        "name": "Kubernetes Cluster on GCP",
+        "description": "Production-ready GKE cluster with node pools, monitoring, and logging",
+        "provider": "gcp",
+        "category": "kubernetes",
+        "tags": [
+          "gcp",
+          "kubernetes",
+          "gke",
+          "monitoring",
+          "infrastructure"
+        ],
+        "mainTf": "resource \"google_container_cluster\" \"primary\" {\n  name     = var.cluster_name\n  location = var.region\n  \n  node_config {\n    machine_type = var.machine_type\n  }\n}",
+        "variablesTf": "variable \"cluster_name\" {\n  description = \"Name of the GKE cluster\"\n  type        = string\n}",
+        "outputsTf": "output \"cluster_endpoint\" {\n  value = google_container_cluster.primary.endpoint\n}",
+        "author": "Platform Team",
+        "version": "1.5.0",
+        "lastUpdated": "2024-01-21T13:10:00Z",
+        "usage": "Deploy managed Kubernetes clusters on Google Cloud",
+        "dependencies": [
+          "terraform",
+          "google_provider"
+        ],
+        "examples": [
+          "production_cluster",
+          "development_cluster",
+          "multi_region"
+        ],
+        "rating": 4.8,
+        "downloads": 178
+      }
+    ]
+  },
+  "categories": {
+    "data-processing": "Data manipulation, validation, and processing utilities",
+    "api-management": "API development, testing, and management tools",
+    "file-management": "File processing, manipulation, and management utilities",
+    "utility": "General utility functions and helpers",
+    "database": "Database containers, scripts, and utilities",
+    "runtime": "Application runtime environments and base images",
+    "networking": "Network infrastructure and security configurations",
+    "kubernetes": "Kubernetes manifests, operators, and configurations"
+  },
+  "tags": [
+    "python",
+    "javascript",
+    "docker",
+    "infrastructure",
+    "aws",
+    "gcp",
+    "kubernetes",
+    "validation",
+    "api",
+    "database",
+    "microservice",
+    "networking",
+    "security",
+    "monitoring",
+    "development",
+    "production",
+    "testing",
+    "ci_cd"
+  ]
+}
