@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi import FastAPI, HTTPException, Depends, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List, Optional
@@ -1511,6 +1511,32 @@ async def delete_application(application_id: int):
         logger.error(f"Error deleting application: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting application: {str(e)}")
 
+# Helper function to safely read toolkit data
+def get_toolkit_data() -> Dict[str, Any]:
+    """Safely read toolkit data, creating structure if it doesn't exist"""
+    try:
+        toolkit_data = read_json_file(JSON_FILES['toolkit'])
+    except HTTPException as http_ex:
+        if http_ex.status_code == 404:
+            logger.info("Toolkit file not found, creating new structure")
+            toolkit_data = {"toolkit": {"functions": [], "containers": [], "terraform": [], "packages": []}}
+        else:
+            raise
+    except Exception as e:
+        logger.error(f"Error reading toolkit file: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error reading toolkit data: {str(e)}")
+    
+    # Ensure toolkit structure exists
+    if 'toolkit' not in toolkit_data:
+        toolkit_data['toolkit'] = {}
+    
+    # Initialize arrays if they don't exist
+    for component_type in ['functions', 'containers', 'terraform', 'packages']:
+        if component_type not in toolkit_data['toolkit']:
+            toolkit_data['toolkit'][component_type] = []
+    
+    return toolkit_data
+
 # Toolkit CRUD endpoints
 @app.post("/api/toolkit")
 async def create_toolkit_component(component: Dict[str, Any]):
@@ -1528,7 +1554,7 @@ async def create_toolkit_component(component: Dict[str, Any]):
     """
     try:
         logger.info(f"Create request for toolkit component: {component.get('name', 'Unknown')}")
-        toolkit_data = read_json_file(JSON_FILES['toolkit'])
+        toolkit_data = get_toolkit_data()
         
         # Determine component type and generate ID
         component_type = component.get('type', 'functions')
@@ -1592,6 +1618,194 @@ async def create_toolkit_component(component: Dict[str, Any]):
         logger.error(f"Error creating toolkit component: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating toolkit component: {str(e)}")
 
+@app.put("/api/toolkit/packages/{package_id}")
+async def update_toolkit_package(
+    package_id: str, 
+    package_data: Dict[str, Any] = Body(...), 
+    current_user: dict = Depends(require_editor_or_admin)
+):
+    """
+    Update or create a toolkit package.
+    
+    Args:
+        package_id: UUID of the package (or 'new' for creating a new package)
+        package_data: Package metadata including description, version, maintainers, etc.
+        
+    Returns:
+        dict: Success message and package info
+    """
+    try:
+        logger.info(f"Update request for toolkit package: {package_id}")
+        logger.info(f"Package data type: {type(package_data)}")
+        logger.info(f"Package data received: {package_data}")
+        
+        if package_data is None:
+            raise HTTPException(status_code=400, detail="Package data is required")
+        
+        if not isinstance(package_data, dict):
+            raise HTTPException(status_code=400, detail=f"Package data must be a dictionary, got {type(package_data)}")
+        
+        # Read toolkit data
+        toolkit_data = get_toolkit_data()
+        
+        packages = toolkit_data['toolkit'].get('packages', [])
+        package_index = None
+        is_new_package = (package_id == 'new' or package_id not in [pkg.get('id') for pkg in packages])
+        
+        if not is_new_package:
+            for i, pkg in enumerate(packages):
+                if pkg.get('id') == package_id:
+                    package_index = i
+                    break
+        
+        # Safely extract and validate data
+        try:
+            # Ensure functionIds is a list
+            function_ids = package_data.get('functionIds', [])
+            if function_ids is None:
+                function_ids = []
+            elif not isinstance(function_ids, list):
+                logger.warning(f"functionIds is not a list, converting: {function_ids}")
+                function_ids = list(function_ids) if hasattr(function_ids, '__iter__') else []
+            
+            # Ensure maintainers is a list
+            maintainers = package_data.get('maintainers', [])
+            if maintainers is None:
+                maintainers = []
+            elif not isinstance(maintainers, list):
+                logger.warning(f"maintainers is not a list, converting: {maintainers}")
+                maintainers = list(maintainers) if hasattr(maintainers, '__iter__') else []
+            
+            # Safely get string fields
+            description = str(package_data.get('description', '')) if package_data.get('description') is not None else ''
+            version = str(package_data.get('version', '')) if package_data.get('version') is not None else ''
+            latest_release_date = str(package_data.get('latestReleaseDate', '')) if package_data.get('latestReleaseDate') is not None else ''
+            documentation = str(package_data.get('documentation', '')) if package_data.get('documentation') is not None else ''
+            github_repo = str(package_data.get('githubRepo', '')) if package_data.get('githubRepo') is not None else ''
+            package_name = package_data.get('name', '')
+            if not package_name:
+                raise HTTPException(status_code=400, detail="Package name is required")
+            
+            pip_install = str(package_data.get('pipInstall', f'pip install {package_name}')) if package_data.get('pipInstall') is not None else f'pip install {package_name}'
+            
+            # Generate UUID for new packages
+            if is_new_package:
+                package_uuid = str(uuid.uuid4())
+            else:
+                package_uuid = package_id
+            
+            package_metadata = {
+                "id": package_uuid,
+                "name": package_name,
+                "description": description,
+                "version": version,
+                "latestReleaseDate": latest_release_date,
+                "maintainers": maintainers,
+                "documentation": documentation,
+                "githubRepo": github_repo,
+                "pipInstall": pip_install,
+                "functionIds": function_ids,
+            }
+        except Exception as e:
+            logger.error(f"Error processing package data: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=400, detail=f"Error processing package data: {str(e)}")
+        
+        # Update or create package
+        try:
+            if package_index is not None:
+                toolkit_data['toolkit']['packages'][package_index] = package_metadata
+                logger.info(f"Updated existing package: {package_name} (ID: {package_uuid})")
+            else:
+                toolkit_data['toolkit']['packages'].append(package_metadata)
+                logger.info(f"Created new package: {package_name} (ID: {package_uuid})")
+        except Exception as e:
+            logger.error(f"Error updating package in memory: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error updating package: {str(e)}")
+        
+        # Save the updated toolkit data
+        try:
+            logger.info(f"Attempting to write toolkit data to: {JSON_FILES['toolkit']}")
+            logger.info(f"Toolkit data structure: {list(toolkit_data.keys())}")
+            write_json_file(JSON_FILES['toolkit'], toolkit_data)
+            logger.info(f"Package {package_name} (ID: {package_uuid}) saved successfully")
+        except HTTPException as http_ex:
+            logger.error(f"HTTPException writing toolkit file: {http_ex.status_code} - {http_ex.detail}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Error writing toolkit file: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Error saving toolkit data: {str(e)}")
+        
+        return {
+            "message": "Package saved successfully",
+            "package": package_metadata
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error saving toolkit package: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error saving toolkit package: {str(e)}")
+
+@app.delete("/api/toolkit/packages/{package_id}")
+async def delete_toolkit_package(
+    package_id: str,
+    current_user: dict = Depends(require_editor_or_admin)
+):
+    """
+    Delete a toolkit package.
+    
+    Args:
+        package_id: UUID of the package to delete
+        
+    Returns:
+        dict: Success message and deleted package info
+    """
+    try:
+        logger.info(f"Delete request for toolkit package: {package_id}")
+        
+        toolkit_data = get_toolkit_data()
+        
+        packages = toolkit_data['toolkit'].get('packages', [])
+        package_to_delete = None
+        actual_id = None
+        actual_name = None
+        
+        for pkg in packages:
+            if pkg.get('id') == package_id:
+                package_to_delete = pkg
+                actual_id = pkg.get('id')
+                actual_name = pkg.get('name')
+                break
+            if pkg.get('name') == package_id:
+                package_to_delete = pkg
+                actual_id = pkg.get('id')
+                actual_name = pkg.get('name')
+                break
+        
+        if not package_to_delete:
+            logger.warning(f"Package not found. Searched for ID/name: '{package_id}'. Available packages: {[p.get('name') for p in packages]}")
+            raise HTTPException(status_code=404, detail=f"Package with ID/name '{package_id}' not found in packages array")
+        
+        toolkit_data['toolkit']['packages'] = [
+            pkg for pkg in packages 
+            if not (actual_id and pkg.get('id') == actual_id) and not (actual_name and pkg.get('name') == actual_name and not pkg.get('id'))
+        ]
+        
+        write_json_file(JSON_FILES['toolkit'], toolkit_data)
+        
+        logger.info(f"Package {package_to_delete.get('name', 'Unknown')} (ID: {package_id}) deleted successfully")
+        
+        return {
+            "message": "Package deleted successfully",
+            "id": package_id,
+            "name": package_to_delete.get('name', 'Unknown'),
+            "deleted": True
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting toolkit package: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error deleting toolkit package: {str(e)}")
+
 @app.put("/api/toolkit/{component_type}/{component_id}")
 async def update_toolkit_component(component_type: str, component_id: str, component: Dict[str, Any]):
     """
@@ -1614,7 +1828,7 @@ async def update_toolkit_component(component_type: str, component_id: str, compo
         if component_type not in ['functions', 'containers', 'terraform']:
             raise HTTPException(status_code=400, detail="Invalid component type")
         
-        toolkit_data = read_json_file(JSON_FILES['toolkit'])
+        toolkit_data = get_toolkit_data()
         
         # Find the component to update
         comp_to_update = None
@@ -1703,7 +1917,7 @@ async def track_toolkit_component_click(component_type: str, component_id: str):
             raise HTTPException(status_code=400, detail="Invalid component type")
         
         # Read current toolkit data
-        toolkit_data = read_json_file(JSON_FILES['toolkit'])
+        toolkit_data = get_toolkit_data()
         
         # Find the component to update
         component_index = None
@@ -1774,7 +1988,7 @@ async def delete_toolkit_component(component_type: str, component_id: str):
         if component_type not in ['functions', 'containers', 'terraform']:
             raise HTTPException(status_code=400, detail="Invalid component type")
         
-        toolkit_data = read_json_file(JSON_FILES['toolkit'])
+        toolkit_data = get_toolkit_data()
         
         comp_to_delete = None
         for comp in toolkit_data['toolkit'][component_type]:
@@ -1807,177 +2021,6 @@ async def delete_toolkit_component(component_type: str, component_id: str):
     except Exception as e:
         logger.error(f"Error deleting toolkit component: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting toolkit component: {str(e)}")
-
-@app.put("/api/toolkit/packages/{package_id}")
-async def update_toolkit_package(
-    package_id: str, 
-    package_data: Dict[str, Any], 
-    current_user: dict = Depends(require_editor_or_admin)
-):
-    """
-    Update or create a toolkit package.
-    
-    Args:
-        package_id: UUID of the package (or 'new' for creating a new package)
-        package_data: Package metadata including description, version, maintainers, etc.
-        
-    Returns:
-        dict: Success message and package info
-    """
-    try:
-        logger.info(f"Update request for toolkit package: {package_id}")
-        
-        if package_data is None:
-            raise HTTPException(status_code=400, detail="Package data is required")
-        
-        if not isinstance(package_data, dict):
-            raise HTTPException(status_code=400, detail=f"Package data must be a dictionary, got {type(package_data)}")
-        
-        toolkit_data = read_json_file(JSON_FILES['toolkit'])
-        
-        if 'toolkit' not in toolkit_data:
-            toolkit_data['toolkit'] = {}
-        
-        if 'packages' not in toolkit_data['toolkit']:
-            toolkit_data['toolkit']['packages'] = []
-        
-        packages = toolkit_data['toolkit'].get('packages', [])
-        package_index = None
-        is_new_package = (package_id == 'new' or package_id not in [pkg.get('id') for pkg in packages])
-        
-        if not is_new_package:
-            for i, pkg in enumerate(packages):
-                if pkg.get('id') == package_id:
-                    package_index = i
-                    break
-        
-        function_ids = package_data.get('functionIds', [])
-        if function_ids is None:
-            function_ids = []
-        elif not isinstance(function_ids, list):
-            function_ids = list(function_ids) if hasattr(function_ids, '__iter__') else []
-        
-        maintainers = package_data.get('maintainers', [])
-        if maintainers is None:
-            maintainers = []
-        elif not isinstance(maintainers, list):
-            maintainers = list(maintainers) if hasattr(maintainers, '__iter__') else []
-        
-        description = str(package_data.get('description', '')) if package_data.get('description') is not None else ''
-        version = str(package_data.get('version', '')) if package_data.get('version') is not None else ''
-        latest_release_date = str(package_data.get('latestReleaseDate', '')) if package_data.get('latestReleaseDate') is not None else ''
-        documentation = str(package_data.get('documentation', '')) if package_data.get('documentation') is not None else ''
-        github_repo = str(package_data.get('githubRepo', '')) if package_data.get('githubRepo') is not None else ''
-        package_name = package_data.get('name', '')
-        if not package_name:
-            raise HTTPException(status_code=400, detail="Package name is required")
-        
-        pip_install = str(package_data.get('pipInstall', f'pip install {package_name}')) if package_data.get('pipInstall') is not None else f'pip install {package_name}'
-        
-        if is_new_package:
-            package_uuid = str(uuid.uuid4())
-        else:
-            package_uuid = package_id
-        
-        package_metadata = {
-            "id": package_uuid,
-            "name": package_name,
-            "description": description,
-            "version": version,
-            "latestReleaseDate": latest_release_date,
-            "maintainers": maintainers,
-            "documentation": documentation,
-            "githubRepo": github_repo,
-            "pipInstall": pip_install,
-            "functionIds": function_ids,
-        }
-        
-        if package_index is not None:
-            toolkit_data['toolkit']['packages'][package_index] = package_metadata
-            logger.info(f"Updated existing package: {package_name} (ID: {package_uuid})")
-        else:
-            toolkit_data['toolkit']['packages'].append(package_metadata)
-            logger.info(f"Created new package: {package_name} (ID: {package_uuid})")
-        
-        write_json_file(JSON_FILES['toolkit'], toolkit_data)
-        logger.info(f"Package {package_name} (ID: {package_uuid}) saved successfully")
-        
-        return {
-            "message": "Package saved successfully",
-            "package": package_metadata
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error saving toolkit package: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error saving toolkit package: {str(e)}")
-
-@app.delete("/api/toolkit/packages/{package_id}")
-async def delete_toolkit_package(
-    package_id: str,
-    current_user: dict = Depends(require_editor_or_admin)
-):
-    """
-    Delete a toolkit package.
-    
-    Args:
-        package_id: UUID of the package to delete
-        
-    Returns:
-        dict: Success message and deleted package info
-    """
-    try:
-        logger.info(f"Delete request for toolkit package: {package_id}")
-        
-        toolkit_data = read_json_file(JSON_FILES['toolkit'])
-        
-        if 'toolkit' not in toolkit_data:
-            toolkit_data['toolkit'] = {}
-        
-        if 'packages' not in toolkit_data['toolkit']:
-            toolkit_data['toolkit']['packages'] = []
-        
-        packages = toolkit_data['toolkit'].get('packages', [])
-        package_to_delete = None
-        actual_id = None
-        actual_name = None
-        
-        for pkg in packages:
-            if pkg.get('id') == package_id:
-                package_to_delete = pkg
-                actual_id = pkg.get('id')
-                actual_name = pkg.get('name')
-                break
-            if pkg.get('name') == package_id:
-                package_to_delete = pkg
-                actual_id = pkg.get('id')
-                actual_name = pkg.get('name')
-                break
-        
-        if not package_to_delete:
-            logger.warning(f"Package not found. Searched for ID/name: '{package_id}'. Available packages: {[p.get('name') for p in packages]}")
-            raise HTTPException(status_code=404, detail=f"Package with ID/name '{package_id}' not found in packages array")
-        
-        toolkit_data['toolkit']['packages'] = [
-            pkg for pkg in packages 
-            if not (actual_id and pkg.get('id') == actual_id) and not (actual_name and pkg.get('name') == actual_name and not pkg.get('id'))
-        ]
-        
-        write_json_file(JSON_FILES['toolkit'], toolkit_data)
-        
-        logger.info(f"Package {package_to_delete.get('name', 'Unknown')} (ID: {package_id}) deleted successfully")
-        
-        return {
-            "message": "Package deleted successfully",
-            "id": package_id,
-            "name": package_to_delete.get('name', 'Unknown'),
-            "deleted": True
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error deleting toolkit package: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error deleting toolkit package: {str(e)}")
 
 @app.post("/api/toolkit/import-from-library")
 async def import_functions_from_library(
